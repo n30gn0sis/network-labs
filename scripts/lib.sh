@@ -167,3 +167,23 @@ wait_for() {
     elapsed=$((elapsed + interval))
   done
 }
+
+# ---- export helpers --------------------------------------------------------
+
+# export_header_sha FILE -> short sha from a first-line "derived from topology.clab.yml @ <sha>"
+# comment in FILE, else from the sidecar FILE.derived (for JSON exports), else "".
+export_header_sha() {
+  local file="$1" sha
+  sha="$(head -n1 "$file" | sed -nE 's/.*derived from topology\.clab\.yml @ ([0-9a-f]{7,40}).*/\1/p')"
+  if [[ -z "$sha" && -f "$file.derived" ]]; then
+    sha="$(head -n1 "$file.derived" | sed -nE 's/.*derived from topology\.clab\.yml @ ([0-9a-f]{7,40}).*/\1/p')"
+  fi
+  printf '%s\n' "$sha"
+}
+
+# topology_last_sha DIR -> short sha of the last commit touching DIR/topology.clab.yml, or ""
+topology_last_sha() {
+  local dir="$1"
+  git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1 || { printf '\n'; return 0; }
+  git -C "$dir" log -n1 --format=%h -- "$dir/topology.clab.yml" 2>/dev/null || printf '\n'
+}
