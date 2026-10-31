@@ -30,4 +30,20 @@ test_template_readme_has_sections() {
   assert_contains "$readme" "## Verification"
 }
 
+test_template_readme_has_placeholder() {
+  assert_contains "$(cat "$TEMPLATE/README.md")" "__SCENARIO_NAME__"
+}
+test_template_bind_sources_exist() {
+  local src
+  while IFS= read -r src; do
+    assert_file_exists "$TEMPLATE/$src"
+  done < <(yq -r '.topology.nodes[].binds[]? | split(":") | .[0]' "$TEMPLATE/topology.clab.yml")
+}
+test_template_verify_has_strict_mode() {
+  assert_contains "$(cat "$TEMPLATE/verify.sh")" "set -euo pipefail"
+}
+test_template_daemons_enable_vtysh() {
+  assert_contains "$(cat "$TEMPLATE/configs/r1/daemons")" "vtysh_enable=yes"
+}
+
 run_tests
