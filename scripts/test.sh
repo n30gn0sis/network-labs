@@ -14,7 +14,10 @@ done
 yq --version 2>&1 | grep -q 'mikefarah/yq' || { echo "error: yq must be mikefarah yq v4, found: $(yq --version 2>&1 | head -1)" >&2; exit 1; }
 
 echo "== shellcheck"
-mapfile -t scripts < <(find scripts tests scenarios -name '*.sh' -type f 2>/dev/null | sort)
+dirs=()
+for d in scripts tests scenarios; do [[ -d "$d" ]] && dirs+=("$d"); done
+mapfile -t scripts < <(find "${dirs[@]}" -name '*.sh' -type f | sort)
+[[ ${#scripts[@]} -gt 0 ]] || { echo "error: no shell scripts found to check" >&2; exit 1; }
 shellcheck -x "${scripts[@]}"
 
 echo "== tests"
