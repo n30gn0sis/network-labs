@@ -119,4 +119,54 @@ test_resolve_variant_rejects_unknown() {
   assert_fails bash -c 'source "'"$REPO_ROOT"'/scripts/lib.sh"; resolve_variant "'"$dir"'" junos'
 }
 
+make_topology() {
+  local dir="$1"
+  cat >"$dir/topology.clab.yml" <<'EOF'
+name: demo
+topology:
+  nodes:
+    r1:
+      kind: linux
+      image: quay.io/frrouting/frr:10.1
+      binds:
+        - configs/r1/frr.conf:/etc/frr/frr.conf
+    r2:
+      kind: linux
+      image: quay.io/frrouting/frr:10.1
+  links:
+    - endpoints: ["r1:eth1", "r2:eth1"]
+EOF
+}
+
+test_build_topology_copies_default_without_patch() {
+  local root dir out; root="$(make_tmpdir)"; dir="$(make_scenario "$root" demo)"; make_topology "$dir"
+  out="$(build_topology "$dir" frr)"
+  assert_eq "$dir/.build/frr.clab.yml" "$out"
+  assert_eq quay.io/frrouting/frr:10.1 "$(yq -r .topology.nodes.r1.image "$out")"
+  assert_eq r1:eth1 "$(yq -r '.topology.links[0].endpoints[0]' "$out")"
+}
+test_build_topology_merges_patch() {
+  local root dir out; root="$(make_tmpdir)"; dir="$(make_scenario "$root" demo)"; make_topology "$dir"
+  mkdir -p "$dir/variants/cisco-iosxe"
+  cat >"$dir/variants/cisco-iosxe/topology.patch.yml" <<'EOF'
+topology:
+  nodes:
+    r1:
+      kind: cisco_c8000v
+      image: vrnetlab/cisco_c8000v:17.12
+      binds: []
+EOF
+  out="$(build_topology "$dir" cisco-iosxe)"
+  assert_eq "$dir/.build/cisco-iosxe.clab.yml" "$out"
+  assert_eq cisco_c8000v "$(yq -r .topology.nodes.r1.kind "$out")"
+  assert_eq vrnetlab/cisco_c8000v:17.12 "$(yq -r .topology.nodes.r1.image "$out")"
+  assert_eq 0 "$(yq -r '.topology.nodes.r1.binds | length' "$out")" "binds replaced by patch"
+  assert_eq quay.io/frrouting/frr:10.1 "$(yq -r .topology.nodes.r2.image "$out")" "untouched node keeps default"
+  assert_eq demo "$(yq -r .name "$out")"
+}
+test_build_topology_fails_without_topology_file() {
+  local root dir; root="$(make_tmpdir)"; dir="$(make_scenario "$root" demo)"
+  assert_fails bash -c 'source "'"$REPO_ROOT"'/scripts/lib.sh"; build_topology "'"$dir"'" frr'
+}
+
 run_tests

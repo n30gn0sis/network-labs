@@ -88,3 +88,20 @@ resolve_variant() {
     || fail "variant '$variant' is not defined in $dir/scenario.yml"
   printf '%s\n' "$variant"
 }
+
+# build_topology DIR VARIANT -> writes DIR/.build/VARIANT.clab.yml and echoes the path.
+# Deep-merges variants/VARIANT/topology.patch.yml onto topology.clab.yml when present.
+build_topology() {
+  local dir="$1" variant="$2"
+  local base="$dir/topology.clab.yml" patch="$dir/variants/$variant/topology.patch.yml"
+  local out="$dir/.build/$variant.clab.yml"
+  [[ -f "$base" ]] || fail "topology missing: $base"
+  mkdir -p "$dir/.build"
+  if [[ -f "$patch" ]]; then
+    # shellcheck disable=SC2016  # $item is yq syntax, not shell
+    yq eval-all '. as $item ireduce ({}; . * $item)' "$base" "$patch" >"$out"
+  else
+    cp "$base" "$out"
+  fi
+  printf '%s\n' "$out"
+}
