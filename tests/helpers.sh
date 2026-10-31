@@ -65,7 +65,14 @@ run_tests() {
   local t
   for t in $(declare -F | awk '{print $3}' | grep '^test_' | sort); do
     _TEST_COUNT=$((_TEST_COUNT + 1))
-    if ( set -euo pipefail; "$t" ); then
+    # Run outside any `if` condition: bash disables set -e inside conditions,
+    # which would let a failed mid-test assertion go unnoticed.
+    local rc
+    set +e
+    ( set -euo pipefail; "$t" )
+    rc=$?
+    set -e
+    if [[ "$rc" -eq 0 ]]; then
       printf '  ok   %s\n' "$t"
     else
       printf '  FAIL %s\n' "$t"

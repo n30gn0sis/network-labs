@@ -13,4 +13,30 @@ test_make_tmpdir_creates_dir() {
 }
 test_repo_root_has_git_dir() { [[ -d "$REPO_ROOT/.git" ]]; }
 
+test_failing_assert_midtest_fails_the_test() {
+  local d f out rc=0; d="$(make_tmpdir)"; f="$d/test_probe.sh"
+  cat >"$f" <<EOF
+#!/usr/bin/env bash
+source "$REPO_ROOT/tests/helpers.sh"
+test_probe() { assert_eq a b; true; }
+run_tests
+EOF
+  out="$(bash "$f" 2>&1)" || rc=$?
+  assert_eq 1 "$rc" "probe file exit code"
+  assert_contains "$out" "FAIL test_probe"
+  assert_contains "$out" "1 tests, 1 failed"
+}
+test_passing_probe_reports_success() {
+  local d f out rc=0; d="$(make_tmpdir)"; f="$d/test_probe.sh"
+  cat >"$f" <<EOF
+#!/usr/bin/env bash
+source "$REPO_ROOT/tests/helpers.sh"
+test_probe() { assert_eq a a; }
+run_tests
+EOF
+  out="$(bash "$f" 2>&1)" || rc=$?
+  assert_eq 0 "$rc" "probe file exit code"
+  assert_contains "$out" "1 tests, 0 failed"
+}
+
 run_tests
