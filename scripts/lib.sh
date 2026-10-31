@@ -109,3 +109,24 @@ build_topology() {
   mv "$tmp" "$out"
   printf '%s\n' "$out"
 }
+
+# parse_scenario_args ARGS... -> sets ARG_SCENARIO, ARG_VARIANT, ARG_FORCE (0/1).
+# Accepts: <scenario> [--variant X] [--force]. Calls fail on anything else.
+# shellcheck disable=SC2034  # ARG_* globals are consumed by the calling scripts
+parse_scenario_args() {
+  ARG_SCENARIO="" ARG_VARIANT="" ARG_FORCE=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --variant)
+        [[ $# -ge 2 ]] || fail "--variant requires a value"
+        ARG_VARIANT="$2"; shift 2 ;;
+      --variant=*) ARG_VARIANT="${1#--variant=}"; shift ;;
+      --force) ARG_FORCE=1; shift ;;
+      -*) fail "unknown option: $1" ;;
+      *)
+        [[ -z "$ARG_SCENARIO" ]] || fail "unexpected argument: $1"
+        ARG_SCENARIO="$1"; shift ;;
+    esac
+  done
+  [[ -n "$ARG_SCENARIO" ]] || fail "scenario name required"
+}
