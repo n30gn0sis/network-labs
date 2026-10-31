@@ -97,11 +97,15 @@ build_topology() {
   local out="$dir/.build/$variant.clab.yml"
   [[ -f "$base" ]] || fail "topology missing: $base"
   mkdir -p "$dir/.build"
+  local tmp
+  tmp="$(mktemp "$dir/.build/.$variant.XXXXXX")"
   if [[ -f "$patch" ]]; then
     # shellcheck disable=SC2016  # $item is yq syntax, not shell
-    yq eval-all '. as $item ireduce ({}; . * $item)' "$base" "$patch" >"$out"
+    yq eval-all '. as $item ireduce ({}; . * $item)' "$base" "$patch" >"$tmp" \
+      || { rm -f "$tmp"; fail "cannot merge $patch onto $base"; }
   else
-    cp "$base" "$out"
+    cp "$base" "$tmp" || { rm -f "$tmp"; fail "cannot copy $base"; }
   fi
+  mv "$tmp" "$out"
   printf '%s\n' "$out"
 }

@@ -169,4 +169,14 @@ test_build_topology_fails_without_topology_file() {
   assert_fails bash -c 'source "'"$REPO_ROOT"'/scripts/lib.sh"; build_topology "'"$dir"'" frr'
 }
 
+test_build_topology_fails_on_invalid_patch() {
+  local root dir out rc=0; root="$(make_tmpdir)"; dir="$(make_scenario "$root" demo)"; make_topology "$dir"
+  mkdir -p "$dir/variants/broken"
+  printf 'topology: [unclosed\n' >"$dir/variants/broken/topology.patch.yml"
+  out="$(bash -c 'source "'"$REPO_ROOT"'/scripts/lib.sh"; build_topology "'"$dir"'" broken' 2>&1)" || rc=$?
+  assert_eq 1 "$rc" "exit code"
+  assert_contains "$out" "error: cannot merge"
+  [[ ! -e "$dir/.build/broken.clab.yml" ]] || return 1
+}
+
 run_tests
