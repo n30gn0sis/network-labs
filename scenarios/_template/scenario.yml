@@ -1,0 +1,18 @@
+# Scenario metadata. The topology itself lives in topology.clab.yml.
+name: __SCENARIO_NAME__
+title: Short descriptive title
+topic: category/subtopic          # e.g. routing/ospf, switching/vlan
+status: draft                     # draft | ready. Scripts refuse draft without --force.
+default_variant: frr
+variants:
+  frr:                            # default variant: free images only
+    images:
+      router: quay.io/frrouting/frr:10.1
+  # cisco-iosxe:                  # example vendor variant (uncomment to use)
+  #   images:
+  #     router: vrnetlab/cisco_c8000v:17.12
+  #   notes: build the image with vrnetlab; see images/README.md
+simulators:
+  containerlab: native
+  gns3: none                      # or export/gns3/__SCENARIO_NAME__.gns3
+  eve-ng: none                    # or export/eve-ng/__SCENARIO_NAME__.unl
