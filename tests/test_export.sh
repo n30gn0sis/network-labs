@@ -100,4 +100,15 @@ test_export_unknown_when_topology_uncommitted() {
   assert_contains "$(run_export demo gns3)" "freshness: unknown (topology not committed)"
 }
 
+test_export_header_sha_after_xml_declaration() {
+  local f; f="$(make_tmpdir)/x.unl"
+  printf '<?xml version="1.0" encoding="UTF-8"?>\n<!-- derived from topology.clab.yml @ cafe123 -->\n<lab/>\n' >"$f"
+  assert_eq cafe123 "$(export_header_sha "$f")"
+}
+test_export_header_sha_ignores_third_line() {
+  local f; f="$(make_tmpdir)/x.unl"
+  printf '<?xml version="1.0"?>\n<lab>\n<!-- derived from topology.clab.yml @ dead123 -->\n' >"$f"
+  assert_eq "" "$(export_header_sha "$f")"
+}
+
 run_tests

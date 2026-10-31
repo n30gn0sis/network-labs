@@ -170,13 +170,13 @@ wait_for() {
 
 # ---- export helpers --------------------------------------------------------
 
-# export_header_sha FILE -> short sha from a first-line "derived from topology.clab.yml @ <sha>"
-# comment in FILE, else from the sidecar FILE.derived (for JSON exports), else "".
+# export_header_sha FILE -> short sha from a "derived from topology.clab.yml @ <sha>" comment
+# within the first two lines of FILE, else from the sidecar FILE.derived (for JSON exports), else "".
 export_header_sha() {
   local file="$1" sha
-  sha="$(head -n1 "$file" | sed -nE 's/.*derived from topology\.clab\.yml @ ([0-9a-f]{7,40}).*/\1/p')"
+  sha="$(head -n2 "$file" | sed -nE 's/.*derived from topology\.clab\.yml @ ([0-9a-f]{7,40}).*/\1/p')"
   if [[ -z "$sha" && -f "$file.derived" ]]; then
-    sha="$(head -n1 "$file.derived" | sed -nE 's/.*derived from topology\.clab\.yml @ ([0-9a-f]{7,40}).*/\1/p')"
+    sha="$(head -n2 "$file.derived" | sed -nE 's/.*derived from topology\.clab\.yml @ ([0-9a-f]{7,40}).*/\1/p')"
   fi
   printf '%s\n' "$sha"
 }

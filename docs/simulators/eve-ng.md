@@ -26,7 +26,7 @@ Until a converter exists, `export/eve-ng/<name>.unl` is written by hand from
 
 ## Hand-written export rules
 
-- First line after the XML declaration: `<!-- derived from topology.clab.yml @ <short sha> -->`.
+- First or second line (directly after the `<?xml ...?>` declaration): `<!-- derived from topology.clab.yml @ <short sha> -->`.
 - Node `name` attributes equal clab node names; networks/links in the clab
   `links:` order.
 - Check staleness with `scripts/export.sh <scenario> eve-ng`.

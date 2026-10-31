@@ -11,7 +11,7 @@ Follow https://containerlab.dev/install/ (Linux with Docker). Verify with
 ## Run a scenario
 
 ```bash
-scripts/up.sh <scenario> [--variant <name>]     # deploy
+scripts/up.sh <scenario> [--variant <name>] [--force]  # deploy
 scripts/verify.sh <scenario> [--variant <name>] # run checks
 scripts/down.sh <scenario> [--variant <name>]   # destroy and clean up
 ```

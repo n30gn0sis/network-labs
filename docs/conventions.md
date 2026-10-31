@@ -48,8 +48,9 @@ under `variants:` in `scenario.yml`. Merged topologies are written to
 
 `export/` is derived. If an export disagrees with `topology.clab.yml`, the
 topology wins. Hand-written exports record the source commit as
-`derived from topology.clab.yml @ <short sha>`: `.unl` files carry it as a
-first-line XML comment (`<!-- ... -->`); `.gns3` files are JSON, so it goes in
+`derived from topology.clab.yml @ <short sha>`: `.unl` files carry it as an
+XML comment (`<!-- ... -->`) on the first line or directly after the XML
+declaration; `.gns3` files are JSON, so it goes in
 the first line of a sidecar `<name>.gns3.derived` (`# ...`). Exports use the
 same node labels as the topology and list links in the same order.
 `scripts/export.sh <scenario> gns3|eve-ng` reports whether an export is stale.

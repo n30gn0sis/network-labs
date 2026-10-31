@@ -40,7 +40,7 @@ recorded="$(export_header_sha "$file")"
 current="$(topology_last_sha "$dir")"
 if [[ -z "$recorded" ]]; then
   echo "freshness: unknown (no header)"
-  echo "note: add a first line '<!-- derived from topology.clab.yml @ <short sha> -->' to .unl files,"
+  echo "note: for .unl add '<!-- derived from topology.clab.yml @ <short sha> -->' as the first line, or directly after the XML declaration,"
   echo "      or a sidecar '$rel.derived' whose first line is '# derived from topology.clab.yml @ <short sha>' for .gns3"
   exit 0
 fi
