@@ -47,8 +47,8 @@ test_up_deploys_default_variant() {
   run_up demo >/dev/null 2>&1
   local log; log="$(cat "$STUB_LOG")"
   assert_contains "$log" "deploy --topo $ROOT/scenarios/demo/.build/frr.clab.yml --reconfigure"
-  assert_contains "$log" "$ROOT/scenarios/demo" "runs from scenario dir"
   assert_eq demo "$(yq -r .name "$ROOT/scenarios/demo/.build/frr.clab.yml")"
+  assert_eq "$ROOT/scenarios/demo" "$(sed -n 2p "$STUB_LOG")" "runs from scenario dir"
 }
 test_up_rejects_unknown_variant() { setup; set_ready; assert_fails run_up demo --variant junos; }
 test_up_fails_when_clab_missing() {
@@ -59,6 +59,7 @@ test_down_destroys_with_cleanup() {
   setup; set_ready
   run_down demo >/dev/null 2>&1
   assert_contains "$(cat "$STUB_LOG")" "destroy --topo $ROOT/scenarios/demo/.build/frr.clab.yml --cleanup"
+  assert_eq "$ROOT/scenarios/demo" "$(sed -n 2p "$STUB_LOG")" "runs from scenario dir"
 }
 test_down_works_on_draft_without_force() {
   setup
