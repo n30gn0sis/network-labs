@@ -25,5 +25,14 @@ test_images_readme_lists_free_images() {
   assert_contains "$i" "quay.io/frrouting/frr"
   assert_contains "$i" "vrnetlab"
 }
+test_readme_has_quick_start() {
+  local r; r="$(cat "$REPO_ROOT/README.md")"
+  assert_contains "$r" "scripts/new-scenario.sh"
+  assert_contains "$r" "scripts/up.sh"
+  assert_contains "$r" "scripts/verify.sh"
+  assert_contains "$r" "scripts/down.sh"
+  assert_contains "$r" "scripts/export.sh"
+  assert_contains "$r" "docs/conventions.md"
+}
 
 run_tests
