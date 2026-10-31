@@ -81,7 +81,7 @@ network-labs/
 1. **Node names in `topology.clab.yml` are the key everywhere.** `configs/<node>/`,
    variant overlays and export files all refer to nodes by those names.
 2. **`export/` is derived, never authoritative.** If an export file and the clab
-   file disagree, the clab file wins. Every hand-written export carries a header
+   file disagree, the clab file wins. Every hand-written export records a header
    comment recording the clab file and git short SHA it was written from.
 
 ## Scenario contract
@@ -177,8 +177,10 @@ Documented in `images/README.md` and `docs/conventions.md`:
 
 Until converters exist:
 
-- First line comment: `# derived from topology.clab.yml @ <git short sha>`
-  (for `.unl` XML, an XML comment with the same text).
+- Source commit header `derived from topology.clab.yml @ <git short sha>`:
+  for `.unl` XML, a first-line XML comment; for `.gns3` (JSON, which cannot
+  carry a comment), the first line of a sidecar `<name>.gns3.derived` file
+  (`# derived from ...`). `export.sh` checks the file first, then the sidecar.
 - Node labels identical to clab node names; links in the same order as the clab
   `links:` list.
 - `export.sh` warns when the recorded SHA is older than the last commit that

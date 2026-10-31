@@ -17,7 +17,8 @@ Spec: `docs/superpowers/specs/2026-10-31-multi-simulator-labs-design.md`
 - `yq` means mikefarah yq v4. The Python jq-wrapper `yq` is not acceptable; `require_yq4` must reject it. Install v4 from https://github.com/mikefarah/yq/releases (binary `yq_linux_amd64`) into `~/.local/bin/yq` if `yq --version` does not print `mikefarah/yq`.
 - `shellcheck` from https://github.com/koalaman/shellcheck/releases (tarball, binary inside) into `~/.local/bin/shellcheck` if missing. CI's `ubuntu-latest` already has both tools.
 - Node names in `topology.clab.yml` are the key everywhere: `configs/<node>/`, variant patches, export files.
-- `export/` files are derived. Hand-written ones carry the header `# derived from topology.clab.yml @ <short sha>` (XML comment for `.unl`).
+- `export/` files are derived. Hand-written ones record `derived from topology.clab.yml @ <short sha>`: as a first-line XML comment in `.unl`; as the first line of a sidecar `<name>.gns3.derived` for JSON `.gns3` files.
+- `.superpowers/` (SDD scratch) is git-ignored.
 - Placeholder token in the template is exactly `__SCENARIO_NAME__`.
 - `scenario.yml` required keys: `name`, `title`, `topic`, `status` (`draft`|`ready`), `default_variant`, `variants.<default_variant>`, `simulators.containerlab`, `simulators.gns3`, `simulators.eve-ng`. `name` must equal the directory name except for `_template`.
 - Merged variant topologies go to `scenarios/<name>/.build/<variant>.clab.yml`, which is git-ignored.
@@ -87,6 +88,8 @@ If downloads are blocked in your environment, stop and tell the user; CI will st
 scenarios/*/.build/
 scenarios/*/clab-*/
 .build/
+# local tooling scratch
+.superpowers/
 ```
 
 - [ ] **Step 3: Write `tests/helpers.sh`**
@@ -1379,11 +1382,12 @@ git commit -m "feat: add verify.sh runner and node check helpers"
 
 **Interfaces:**
 - Produces in `lib.sh`:
-  - `export_header_sha FILE`: echoes the short SHA from a first-line comment matching `derived from topology.clab.yml @ <sha>` (works for `#` and `<!-- -->` comments); echoes empty string if none.
+  - `export_header_sha FILE`: echoes the short SHA from a first-line comment matching `derived from topology.clab.yml @ <sha>` (works for `#` and `<!-- -->` comments). If FILE's first line has no header, checks the first line of the sidecar `FILE.derived` (used for JSON formats such as `.gns3` that cannot carry a comment). Echoes empty string if neither has one.
   - `topology_last_sha DIR`: echoes `git log -n1 --format=%h -- DIR/topology.clab.yml` run inside the repo, or empty if uncommitted / not a git repo.
 - Produces: `scripts/export.sh SCENARIO gns3|eve-ng` prints:
   - `export: none` (exit 0) when `scenario.yml` says `none`;
   - `export: <path>`, `source: hand-written` (always, until converters exist), and one of `freshness: current`, `freshness: STALE (export @ X, topology @ Y)`, `freshness: unknown (no header)`, `freshness: unknown (topology not committed)`. Exit 1 on STALE, 0 otherwise. Exit 1 if the path in `scenario.yml` does not exist.
+- Header placement rule: `.unl` files carry `<!-- derived from topology.clab.yml @ <sha> -->` as their first line; `.gns3` files are JSON and carry the header as the first line of a sidecar file `<name>.gns3.derived` next to them.
 
 - [ ] **Step 1: Write failing test**
 
@@ -1409,8 +1413,9 @@ setup_repo() {
 }
 topo_sha() { git -C "$ROOT" log -n1 --format=%h -- scenarios/demo/topology.clab.yml; }
 set_gns3_export() { sed -i "s|^  gns3: none|  gns3: export/gns3/demo.gns3|" "$ROOT/scenarios/demo/scenario.yml"; }
-write_export() { # sha
-  printf '# derived from topology.clab.yml @ %s\n{"name": "demo"}\n' "$1" >"$ROOT/scenarios/demo/export/gns3/demo.gns3"
+write_export() { # sha -> JSON export plus sidecar header
+  printf '{"name": "demo"}\n' >"$ROOT/scenarios/demo/export/gns3/demo.gns3"
+  printf '# derived from topology.clab.yml @ %s\n' "$1" >"$ROOT/scenarios/demo/export/gns3/demo.gns3.derived"
 }
 run_export() { LIB_REPO_ROOT="$ROOT" "$EXPORT" "$@"; }
 
@@ -1428,6 +1433,18 @@ test_export_header_sha_empty_without_header() {
   local f; f="$(make_tmpdir)/x.unl"
   printf '<lab/>\n' >"$f"
   assert_eq "" "$(export_header_sha "$f")"
+}
+test_export_header_sha_reads_sidecar_for_json() {
+  local f; f="$(make_tmpdir)/x.gns3"
+  printf '{"name": "x"}\n' >"$f"
+  printf '# derived from topology.clab.yml @ 1234abc\n' >"$f.derived"
+  assert_eq 1234abc "$(export_header_sha "$f")"
+}
+test_export_header_sha_prefers_file_over_sidecar() {
+  local f; f="$(make_tmpdir)/x.unl"
+  printf '<!-- derived from topology.clab.yml @ aaaaaaa -->\n' >"$f"
+  printf '# derived from topology.clab.yml @ bbbbbbb\n' >"$f.derived"
+  assert_eq aaaaaaa "$(export_header_sha "$f")"
 }
 test_topology_last_sha_matches_git() {
   setup_repo
@@ -1466,6 +1483,7 @@ test_export_stale_exits_1() {
 test_export_unknown_without_header() {
   setup_repo; set_gns3_export
   printf '{}\n' >"$ROOT/scenarios/demo/export/gns3/demo.gns3"
+  rm -f "$ROOT/scenarios/demo/export/gns3/demo.gns3.derived"
   assert_contains "$(run_export demo gns3)" "freshness: unknown (no header)"
 }
 test_export_unknown_when_topology_uncommitted() {
@@ -1488,10 +1506,15 @@ Expected: failures.
 ```bash
 # ---- export helpers --------------------------------------------------------
 
-# export_header_sha FILE -> short sha from a first-line "derived from topology.clab.yml @ <sha>" comment, or ""
+# export_header_sha FILE -> short sha from a first-line "derived from topology.clab.yml @ <sha>"
+# comment in FILE, else from the sidecar FILE.derived (for JSON exports), else "".
 export_header_sha() {
-  local file="$1"
-  head -n1 "$file" | sed -nE 's/.*derived from topology\.clab\.yml @ ([0-9a-f]{7,40}).*/\1/p'
+  local file="$1" sha
+  sha="$(head -n1 "$file" | sed -nE 's/.*derived from topology\.clab\.yml @ ([0-9a-f]{7,40}).*/\1/p')"
+  if [[ -z "$sha" && -f "$file.derived" ]]; then
+    sha="$(head -n1 "$file.derived" | sed -nE 's/.*derived from topology\.clab\.yml @ ([0-9a-f]{7,40}).*/\1/p')"
+  fi
+  printf '%s\n' "$sha"
 }
 
 # topology_last_sha DIR -> short sha of the last commit touching DIR/topology.clab.yml, or ""
@@ -1547,7 +1570,8 @@ recorded="$(export_header_sha "$file")"
 current="$(topology_last_sha "$dir")"
 if [[ -z "$recorded" ]]; then
   echo "freshness: unknown (no header)"
-  echo "note: add a first line: '# derived from topology.clab.yml @ <short sha>' (XML comment for .unl)"
+  echo "note: add a first line '<!-- derived from topology.clab.yml @ <short sha> -->' to .unl files,"
+  echo "      or a sidecar '$rel.derived' whose first line is '# derived from topology.clab.yml @ <short sha>' for .gns3"
   exit 0
 fi
 if [[ -z "$current" ]]; then
@@ -1566,7 +1590,7 @@ exit 1
 - [ ] **Step 5: Run tests**
 
 Run: `chmod +x scripts/export.sh && scripts/test.sh`
-Expected: `test_export.sh: 14 tests, 0 failed`, `ALL PASSED`.
+Expected: `test_export.sh: 16 tests, 0 failed`, `ALL PASSED`.
 
 - [ ] **Step 6: Commit**
 
@@ -1681,9 +1705,11 @@ under `variants:` in `scenario.yml`. Merged topologies are written to
 ## Exports
 
 `export/` is derived. If an export disagrees with `topology.clab.yml`, the
-topology wins. Hand-written exports start with the line
-`# derived from topology.clab.yml @ <short sha>` (`<!-- ... -->` for `.unl`),
-use the same node labels as the topology and list links in the same order.
+topology wins. Hand-written exports record the source commit as
+`derived from topology.clab.yml @ <short sha>`: `.unl` files carry it as a
+first-line XML comment (`<!-- ... -->`); `.gns3` files are JSON, so it goes in
+the first line of a sidecar `<name>.gns3.derived` (`# ...`). Exports use the
+same node labels as the topology and list links in the same order.
 `scripts/export.sh <scenario> gns3|eve-ng` reports whether an export is stale.
 
 ## Scripts
@@ -1775,10 +1801,9 @@ under `simulators.gns3`.
 
 ## Hand-written export rules
 
-- First line: `# derived from topology.clab.yml @ <short sha>` (GNS3 ignores
-  unknown leading comment lines only if the file is read by our tooling; keep
-  the header in a sidecar `README.md` if GNS3 rejects it, and note that in
-  `scenario.yml`).
+- `.gns3` files are JSON and cannot carry a comment, so the header goes in a
+  sidecar: `export/gns3/<name>.gns3.derived` whose first line is
+  `# derived from topology.clab.yml @ <short sha>`.
 - Node labels equal clab node names; links in the clab `links:` order.
 - Check staleness with `scripts/export.sh <scenario> gns3`.
 ```
