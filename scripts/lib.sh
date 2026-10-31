@@ -130,3 +130,40 @@ parse_scenario_args() {
   done
   [[ -n "$ARG_SCENARIO" ]] || fail "scenario name required"
 }
+
+# ---- node helpers for scenario verify.sh files ---------------------------
+# Require LAB_NAME (set by scripts/verify.sh from the topology's `name`).
+# DOCKER (default: docker) overrides the docker binary, e.g. for tests.
+
+node_exec() {
+  local node="$1" cmd="$2"
+  [[ -n "${LAB_NAME:-}" ]] || fail "LAB_NAME is not set; run via scripts/verify.sh"
+  "${DOCKER:-docker}" exec "clab-${LAB_NAME}-${node}" sh -c "$cmd"
+}
+
+expect_contains() {
+  local node="$1" cmd="$2" expected="$3" out
+  out="$(node_exec "$node" "$cmd" 2>&1)" || true
+  if [[ "$out" == *"$expected"* ]]; then
+    log "ok: $node: $cmd"
+  else
+    fail "$node: '$cmd' output did not contain '$expected'. Output: $out"
+  fi
+}
+
+wait_for() {
+  local timeout="$1" node="$2" cmd="$3" expected="$4"
+  local interval="${WAIT_INTERVAL:-2}" elapsed=0 out
+  while true; do
+    out="$(node_exec "$node" "$cmd" 2>&1)" || true
+    if [[ "$out" == *"$expected"* ]]; then
+      log "ok: $node: $cmd (after ${elapsed}s)"
+      return 0
+    fi
+    if [[ "$elapsed" -ge "$timeout" ]]; then
+      fail "$node: '$cmd' did not contain '$expected' within ${timeout}s. Last output: $out"
+    fi
+    sleep "$interval"
+    elapsed=$((elapsed + interval))
+  done
+}
