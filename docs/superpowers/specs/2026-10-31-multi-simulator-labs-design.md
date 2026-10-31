@@ -43,7 +43,7 @@ scaffolding. No real scenario is written yet.
 ```
 network-labs/
 ├── README.md                  # purpose, quick start, supported simulators
-├── .gitignore                 # ignores scenarios/*/.build/ and containerlab runtime dirs
+├── .gitignore                 # ignores scenarios/*/.*.build.clab.yml and containerlab runtime dirs
 ├── docs/
 │   ├── conventions.md         # naming, image policy, scenario structure
 │   ├── simulators/
@@ -122,7 +122,7 @@ keys present, each a path or `none` / `native`).
 
 - `topology.patch.yml`: per-node `image` and `kind` overrides, deep-merged onto
   `topology.clab.yml` by `up.sh` using `yq`. The merged result is written to a
-  git-ignored `.build/<variant>.clab.yml` and that file is deployed.
+  git-ignored `.<variant>.build.clab.yml` beside the source topology and that file is deployed.
 - `configs/<node>/`: replacement startup configs in that NOS's syntax.
 
 Any node without an override falls back to the default topology and configs.

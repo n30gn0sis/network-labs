@@ -8,7 +8,8 @@ usage() {
   cat <<'EOF'
 usage: scripts/up.sh <scenario> [--variant <name>] [--force]
 
-Merges the variant overlay (if any) into .build/<variant>.clab.yml and runs
+Merges the variant overlay (if any) into .<variant>.build.clab.yml
+beside topology.clab.yml and runs
 `containerlab deploy`. Refuses scenarios with status: draft unless --force.
 Environment: CLAB (default: containerlab) overrides the containerlab binary.
 EOF

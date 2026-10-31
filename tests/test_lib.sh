@@ -114,6 +114,22 @@ test_resolve_variant_accepts_defined() {
   local root dir; root="$(make_tmpdir)"; dir="$(make_scenario "$root" demo)"
   assert_eq cisco-iosxe "$(resolve_variant "$dir" cisco-iosxe)"
 }
+test_resolve_variant_rejects_malicious_names() {
+  local root dir out rc v; root="$(make_tmpdir)"; dir="$(make_scenario "$root" demo)"
+  for v in 'x"] // "y' '../evil'; do
+    rc=0
+    out="$(resolve_variant "$dir" "$v" 2>&1)" || rc=$?
+    assert_eq 1 "$rc" "exit code for $v"
+    assert_contains "$out" "error:"
+  done
+}
+test_resolve_variant_rejects_invalid_default() {
+  local root dir out rc=0; root="$(make_tmpdir)"; dir="$(make_scenario "$root" demo)"
+  sed -i 's/^default_variant: frr/default_variant: ..\/evil/' "$dir/scenario.yml"
+  out="$(resolve_variant "$dir" 2>&1)" || rc=$?
+  assert_eq 1 "$rc" "exit code"
+  assert_contains "$out" "invalid default_variant"
+}
 test_resolve_variant_rejects_unknown() {
   local root dir; root="$(make_tmpdir)"; dir="$(make_scenario "$root" demo)"
   assert_fails bash -c 'source "'"$REPO_ROOT"'/scripts/lib.sh"; resolve_variant "'"$dir"'" junos'
@@ -141,7 +157,7 @@ EOF
 test_build_topology_copies_default_without_patch() {
   local root dir out; root="$(make_tmpdir)"; dir="$(make_scenario "$root" demo)"; make_topology "$dir"
   out="$(build_topology "$dir" frr)"
-  assert_eq "$dir/.build/frr.clab.yml" "$out"
+  assert_eq "$dir/.frr.build.clab.yml" "$out"
   assert_eq quay.io/frrouting/frr:10.1 "$(yq -r .topology.nodes.r1.image "$out")"
   assert_eq r1:eth1 "$(yq -r '.topology.links[0].endpoints[0]' "$out")"
 }
@@ -157,12 +173,20 @@ topology:
       binds: []
 EOF
   out="$(build_topology "$dir" cisco-iosxe)"
-  assert_eq "$dir/.build/cisco-iosxe.clab.yml" "$out"
+  assert_eq "$dir/.cisco-iosxe.build.clab.yml" "$out"
   assert_eq cisco_c8000v "$(yq -r .topology.nodes.r1.kind "$out")"
   assert_eq vrnetlab/cisco_c8000v:17.12 "$(yq -r .topology.nodes.r1.image "$out")"
   assert_eq 0 "$(yq -r '.topology.nodes.r1.binds | length' "$out")" "binds replaced by patch"
   assert_eq quay.io/frrouting/frr:10.1 "$(yq -r .topology.nodes.r2.image "$out")" "untouched node keeps default"
   assert_eq demo "$(yq -r .name "$out")"
+}
+test_build_topology_bind_sources_resolve_from_built_file() {
+  local root dir out src; root="$(make_tmpdir)"; dir="$(make_scenario "$root" demo)"; make_topology "$dir"
+  mkdir -p "$dir/configs/r1"; : >"$dir/configs/r1/frr.conf"
+  out="$(build_topology "$dir" frr)"
+  yq -r '.topology.nodes[].binds[]? | split(":") | .[0]' "$out" | while read -r src; do
+    assert_file_exists "$(dirname "$out")/$src"
+  done
 }
 test_build_topology_fails_without_topology_file() {
   local root dir; root="$(make_tmpdir)"; dir="$(make_scenario "$root" demo)"
@@ -176,7 +200,7 @@ test_build_topology_fails_on_invalid_patch() {
   out="$(bash -c 'source "'"$REPO_ROOT"'/scripts/lib.sh"; build_topology "'"$dir"'" broken' 2>&1)" || rc=$?
   assert_eq 1 "$rc" "exit code"
   assert_contains "$out" "error: cannot merge"
-  [[ ! -e "$dir/.build/broken.clab.yml" ]] || return 1
+  [[ ! -e "$dir/.broken.build.clab.yml" ]] || return 1
 }
 
 run_tests

@@ -26,7 +26,7 @@ under `simulators.gns3`.
 ## Hand-written export rules
 
 - `.gns3` files are JSON and cannot carry a comment, so the header goes in a
-  sidecar: `export/gns3/<name>.gns3.derived` whose first line is
+  sidecar: `export/gns3/<name>.gns3.derived` whose header line at the top is
   `# derived from topology.clab.yml @ <short sha>`.
 - Node labels equal clab node names; links in the clab `links:` order.
 - Check staleness with `scripts/export.sh <scenario> gns3`.

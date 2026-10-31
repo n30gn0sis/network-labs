@@ -42,7 +42,8 @@ The default variant uses free images. A variant directory may hold
 `topology.patch.yml` (deep-merged onto the topology by `yq`; arrays replace,
 maps merge) and `configs/<node>/` replacements. Every variant must be listed
 under `variants:` in `scenario.yml`. Merged topologies are written to
-`.build/<variant>.clab.yml` (git-ignored).
+`.<variant>.build.clab.yml` beside `topology.clab.yml` (git-ignored) so relative
+paths resolve exactly as in the source file.
 
 ## Exports
 
@@ -51,7 +52,7 @@ topology wins. Hand-written exports record the source commit as
 `derived from topology.clab.yml @ <short sha>`: `.unl` files carry it as an
 XML comment (`<!-- ... -->`) on the first line or directly after the XML
 declaration; `.gns3` files are JSON, so it goes in
-the first line of a sidecar `<name>.gns3.derived` (`# ...`). Exports use the
+a header line at the top of a sidecar `<name>.gns3.derived` (`# ...`). Exports use the
 same node labels as the topology and list links in the same order.
 `scripts/export.sh <scenario> gns3|eve-ng` reports whether an export is stale.
 

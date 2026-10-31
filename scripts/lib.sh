@@ -5,6 +5,9 @@
 LIB_REPO_ROOT="${LIB_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 export LIB_REPO_ROOT
 
+# Make failures inside $(...) abort like they do at top level (bash >= 4.4).
+shopt -s inherit_errexit
+
 log()  { printf '%s\n' "$*" >&2; }
 fail() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
@@ -70,7 +73,7 @@ validate_scenario_yml() {
   local dv
   dv="$(yq -r '.default_variant // "null"' "$file")"
   if [[ "$dv" != "null" ]]; then
-    if [[ "$(yq -r ".variants[\"$dv\"] // \"null\"" "$file")" == "null" ]]; then
+    if [[ "$(V="$dv" yq -r '.variants[strenv(V)] // "null"' "$file" 2>/dev/null || echo null)" == "null" ]]; then
       log "scenario.yml: default_variant '$dv' is not defined under variants"
       problems=$((problems + 1))
     fi
@@ -78,27 +81,32 @@ validate_scenario_yml() {
   [[ "$problems" -eq 0 ]]
 }
 
+# valid_variant_name NAME -> 0 if NAME is a safe variant identifier
+valid_variant_name() { [[ "$1" =~ ^[a-z0-9][a-z0-9._-]*$ ]]; }
+
 # resolve_variant DIR [VARIANT] -> VARIANT if defined, else default_variant
 resolve_variant() {
   local dir="$1" variant="${2:-}"
   if [[ -z "$variant" ]]; then
     variant="$(meta "$dir" .default_variant)"
+    valid_variant_name "$variant" || fail "invalid default_variant: $variant"
   fi
-  [[ "$(meta "$dir" ".variants[\"$variant\"]")" != "null" ]] \
+  valid_variant_name "$variant" || fail "invalid variant name: $variant"
+  [[ "$(V="$variant" yq -r '.variants[strenv(V)] // "null"' "$dir/scenario.yml" 2>/dev/null || echo null)" != "null" ]] \
     || fail "variant '$variant' is not defined in $dir/scenario.yml"
   printf '%s\n' "$variant"
 }
 
-# build_topology DIR VARIANT -> writes DIR/.build/VARIANT.clab.yml and echoes the path.
+# build_topology DIR VARIANT -> writes DIR/.VARIANT.build.clab.yml and echoes the path.
+# The file sits beside topology.clab.yml so containerlab resolves relative paths identically.
 # Deep-merges variants/VARIANT/topology.patch.yml onto topology.clab.yml when present.
 build_topology() {
   local dir="$1" variant="$2"
   local base="$dir/topology.clab.yml" patch="$dir/variants/$variant/topology.patch.yml"
-  local out="$dir/.build/$variant.clab.yml"
+  local out="$dir/.$variant.build.clab.yml"
   [[ -f "$base" ]] || fail "topology missing: $base"
-  mkdir -p "$dir/.build"
   local tmp
-  tmp="$(mktemp "$dir/.build/.$variant.XXXXXX")"
+  tmp="$(mktemp "$dir/.$variant.build.XXXXXX")" || fail "cannot create temp file in $dir"
   if [[ -f "$patch" ]]; then
     # shellcheck disable=SC2016  # $item is yq syntax, not shell
     yq eval-all '. as $item ireduce ({}; . * $item)' "$base" "$patch" >"$tmp" \
@@ -106,7 +114,7 @@ build_topology() {
   else
     cp "$base" "$tmp" || { rm -f "$tmp"; fail "cannot copy $base"; }
   fi
-  mv "$tmp" "$out"
+  mv "$tmp" "$out" || { rm -f "$tmp"; fail "cannot write $out"; }
   printf '%s\n' "$out"
 }
 
@@ -129,6 +137,9 @@ parse_scenario_args() {
     esac
   done
   [[ -n "$ARG_SCENARIO" ]] || fail "scenario name required"
+  if [[ -n "$ARG_VARIANT" ]]; then
+    valid_variant_name "$ARG_VARIANT" || fail "invalid variant name: $ARG_VARIANT"
+  fi
 }
 
 # ---- node helpers for scenario verify.sh files ---------------------------
