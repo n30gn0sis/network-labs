@@ -180,10 +180,94 @@ test_as65002_border_only_on_r4() {
   done
 }
 test_all_bind_sources_exist_in_built_topology() {
-  local t src; t="$(built)"
+  local t src n=0; t="$(built)"
   while IFS= read -r src; do
     assert_file_exists "$(dirname "$t")/$src"
+    n=$((n + 1))
   done < <(yq -r '.topology.nodes[].binds[]? | split(":") | .[0]' "$t")
+  assert_eq 12 "$n" "bind source count"
+}
+
+# Stateful docker stub. The second argv word is the container name; the command is $5.
+# It records "ip link set eth2 down/up" in a flag file so routes/traceroute change state.
+make_frr_stub() { # ROOT MODE
+  local root="$1" mode="$2"
+  mkdir -p "$root/bin"
+  cat >"$root/bin/docker" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"$root/docker.log"
+node="\${2#clab-ospf-ebgp-two-as-}"
+cmd="\${5:-}"
+mode="$mode"
+flag="$root/eth2_down"
+case "\$cmd" in
+  *"ip link set eth2 down"*) touch "\$flag"; exit 0 ;;
+  *"ip link set eth2 up"*)   rm -f "\$flag"; exit 0 ;;
+  *"show version"*) echo "FRRouting 10.1 (\$node)" ;;
+  *"grep -c Full"*)
+    if [[ "\$mode" == ospf-stuck && "\$node" == r1 ]]; then echo 1; else echo 2; fi ;;
+  *"show ip ospf neighbor"*)
+    echo "Neighbor ID     Pri State           Up Time         Dead Time Address         Interface"
+    case "\$node" in
+      r1) n1=10.1.0.2; n2=10.1.0.3 ;; r2) n1=10.1.0.1; n2=10.1.0.3 ;; r3) n1=10.1.0.1; n2=10.1.0.2 ;;
+      r4) n1=10.2.0.5; n2=10.2.0.6 ;; r5) n1=10.2.0.4; n2=10.2.0.6 ;; r6) n1=10.2.0.4; n2=10.2.0.5 ;;
+    esac
+    s2="Full/-"; [[ "\$mode" == ospf-stuck && "\$node" == r1 ]] && s2="ExStart/-"
+    echo "\$n1              1 Full/-          1h00m00s          38.000s 10.0.0.1        eth9:10.0.0.2"
+    echo "\$n2              1 \$s2          1h00m00s          38.000s 10.0.0.1        eth8:10.0.0.2" ;;
+  *"show bgp neighbors"*)
+    if [[ "\$mode" == bgp-active ]]; then echo '"bgpState":"Active"'; else echo '"bgpState":"Established"'; fi ;;
+  *"show ip route bgp"*)
+    if [[ "\$node" == r3 ]]; then echo "B>* 10.2.0.0/16 [20/0] via 192.0.2.2, eth3"; else echo "B>* 10.1.0.0/16 [20/0] via 192.0.2.1, eth1"; fi ;;
+  *"show ip route ospf"*) echo "O>* 0.0.0.0/0 [110/1] via 10.1.13.2, eth2" ;;
+  *"show ip route 10.1.0.3/32"*)
+    if [[ -e "\$flag" && "\$mode" != no-reroute ]]; then echo "O>* 10.1.0.3/32 [110/20] via 10.1.12.2, eth3"; else echo "O>* 10.1.0.3/32 [110/10] via 10.1.13.2, eth2"; fi ;;
+  *ping*) echo "5 packets transmitted, 5 received, 0% packet loss" ;;
+  *traceroute*)
+    echo " 1  10.1.100.1  0.1 ms"
+    if [[ -e "\$flag" && "\$mode" != no-reroute ]]; then echo " 2  10.1.12.2  0.2 ms"; echo " 3  10.1.23.2  0.3 ms"; else echo " 2  10.1.13.2  0.2 ms"; fi
+    echo " 4  192.0.2.2  0.4 ms"; echo " 5  10.2.46.2  0.5 ms"; echo " 6  10.2.100.10  0.6 ms" ;;
+  *) echo "unknown" ;;
+esac
+STUB
+  chmod +x "$root/bin/docker"
+}
+run_verify() { # ROOT
+  LIB_REPO_ROOT="$REPO_ROOT" DOCKER="$1/bin/docker" WAIT_INTERVAL=1 BOOT_TIMEOUT=2 OSPF_TIMEOUT=2 BGP_TIMEOUT=2 \
+    "$REPO_ROOT/scripts/verify.sh" ospf-ebgp-two-as
+}
+
+test_verify_passes_against_healthy_stub() {
+  local root out; root="$(make_tmpdir)"; make_frr_stub "$root" ok
+  out="$(run_verify "$root" 2>&1)"
+  assert_contains "$out" "all checks passed"
+  local dk; dk="$(cat "$root/docker.log")"
+  assert_contains "$dk" "clab-ospf-ebgp-two-as-r1 sh -c ip link set eth2 down"
+  assert_contains "$dk" "clab-ospf-ebgp-two-as-r1 sh -c ip link set eth2 up"
+  assert_contains "$dk" "clab-ospf-ebgp-two-as-r3 sh -c vtysh -c 'show bgp neighbors 192.0.2.2 json'"
+  assert_contains "$dk" "clab-ospf-ebgp-two-as-h1 sh -c traceroute"
+  [[ ! -e "$root/eth2_down" ]] || return 1   # link restored at the end
+}
+test_verify_fails_when_ospf_stuck() {
+  local root out rc=0; root="$(make_tmpdir)"; make_frr_stub "$root" ospf-stuck
+  out="$(run_verify "$root" 2>&1)" || rc=$?
+  assert_eq 1 "$rc"
+  assert_contains "$out" "error: r1:"
+  assert_not_contains "$(cat "$root/docker.log")" "ip link set eth2 down" "failover never reached"
+}
+test_verify_fails_when_bgp_active() {
+  local root out rc=0; root="$(make_tmpdir)"; make_frr_stub "$root" bgp-active
+  out="$(run_verify "$root" 2>&1)" || rc=$?
+  assert_eq 1 "$rc"
+  assert_contains "$out" "did not contain 'Established'"
+}
+test_verify_fails_when_no_reroute_and_still_restores_link() {
+  local root out rc=0; root="$(make_tmpdir)"; make_frr_stub "$root" no-reroute
+  out="$(run_verify "$root" 2>&1)" || rc=$?
+  assert_eq 1 "$rc"
+  assert_contains "$out" "show ip route 10.1.0.3/32'' did not contain 'via 10.1.12.2'"
+  assert_eq "ip link set eth2 up" "$(grep -o 'ip link set eth2 [a-z]*' "$root/docker.log" | tail -1)" "trap restored the link"
+  [[ ! -e "$root/eth2_down" ]] || return 1
 }
 
 run_tests
