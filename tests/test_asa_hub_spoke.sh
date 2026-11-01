@@ -84,6 +84,7 @@ tunnel_block() { sed -n "/^interface $2\$/,/^interface \|^route \|^!/p" "$1"; }
 assert_common_base() { # file hostname inside_ip outside_ip
   local c; c="$(cat "$1")"
   assert_contains "$c" "hostname $2"
+  assert_contains "$c" "aaa authorization exec LOCAL auto-enable"
   assert_contains "$c" "interface GigabitEthernet0/0"
   assert_contains "$c" " nameif outside"
   assert_contains "$c" " security-level 0"
@@ -287,7 +288,7 @@ STUB
   chmod +x "$root/bin/docker" "$root/bin/sshpass" "$root/bin/ssh"
 }
 run_verify() { # root variant
-  LIB_REPO_ROOT="$REPO_ROOT" DOCKER="$1/bin/docker" SSHPASS="$1/bin/sshpass" SSH="$1/bin/ssh" \
+  LIB_REPO_ROOT="$REPO_ROOT" DOCKER="$1/bin/docker" SSHPASS_BIN="$1/bin/sshpass" SSH="$1/bin/ssh" \
     WAIT_INTERVAL=1 ASA_BOOT_TIMEOUT=2 ASA_SA_TIMEOUT=2 \
     "$REPO_ROOT/scripts/verify.sh" asa-hub-spoke-ipsec --variant "$2"
 }
@@ -303,6 +304,7 @@ test_verify_passes_for_vti_against_healthy_stubs() {
   assert_contains "$ssh" "show interface Tunnel2 | include line protocol"
   local dk; dk="$(cat "$root/docker.log")"
   assert_contains "$dk" "exec clab-asa-hub-spoke-ipsec-h2 sh -c ping -c 5 -W 2 10.3.0.10"
+  assert_contains "$dk" "exec clab-asa-hub-spoke-ipsec-h3 sh -c ping -c 3 -W 2 10.2.0.10"
   assert_not_contains "$dk" "exec clab-asa-hub-spoke-ipsec-asa-hub"
 }
 test_verify_uses_ikev1_show_for_ikev1_variant() {

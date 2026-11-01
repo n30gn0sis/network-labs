@@ -140,27 +140,37 @@ test_node_mgmt_ip_fails_when_empty() {
 }
 test_asa_exec_builds_sshpass_command() {
   local root out; root="$(make_tmpdir)"; make_asa_stubs "$root"
-  out="$(DOCKER="$root/bin/docker" SSHPASS="$root/bin/sshpass" SSH="$root/bin/ssh" LAB_NAME=demo asa_exec asa-hub "show version")"
+  out="$(DOCKER="$root/bin/docker" SSHPASS_BIN="$root/bin/sshpass" SSH="$root/bin/ssh" LAB_NAME=demo asa_exec asa-hub "show version")"
   assert_contains "$out" "Cisco Adaptive Security Appliance"
   local logged; logged="$(cat "$root/ssh.log")"
-  assert_contains "$logged" "-p Admin@123 $root/bin/ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -o LogLevel=ERROR admin@172.20.20.11 show version"
+  assert_contains "$logged" "-p CiscoAsa1! $root/bin/ssh -n -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -o LogLevel=ERROR admin@172.20.20.11 show version"
+}
+test_asa_exec_fails_when_mgmt_ip_unknown() {
+  local root out rc=0; root="$(make_tmpdir)"; mkdir -p "$root/bin"
+  printf '#!/usr/bin/env bash\ntrue\n' >"$root/bin/docker"; chmod +x "$root/bin/docker"
+  printf '#!/usr/bin/env bash\necho "sshpass-should-not-run" >&2; exit 99\n' >"$root/bin/sshpass"; chmod +x "$root/bin/sshpass"
+  printf '#!/usr/bin/env bash\nexit 99\n' >"$root/bin/ssh"; chmod +x "$root/bin/ssh"
+  out="$(DOCKER="$root/bin/docker" SSHPASS_BIN="$root/bin/sshpass" SSH="$root/bin/ssh" LAB_NAME=demo ASA_NODES="asa-hub" \
+    bash -c 'source "'"$REPO_ROOT"'/scripts/lib.sh"; expect_not_contains asa-hub "show x" "zzz"' 2>&1)" || rc=$?
+  assert_eq 1 "$rc"
+  assert_contains "$out" "could not determine management IP"
 }
 test_asa_exec_honours_user_and_pass_overrides() {
   local root; root="$(make_tmpdir)"; make_asa_stubs "$root"
-  DOCKER="$root/bin/docker" SSHPASS="$root/bin/sshpass" SSH="$root/bin/ssh" LAB_NAME=demo ASA_USER=ops ASA_PASS=s3cret asa_exec asa-hub "show version" >/dev/null
+  DOCKER="$root/bin/docker" SSHPASS_BIN="$root/bin/sshpass" SSH="$root/bin/ssh" LAB_NAME=demo ASA_USER=ops ASA_PASS=s3cret asa_exec asa-hub "show version" >/dev/null
   assert_contains "$(cat "$root/ssh.log")" "-p s3cret $root/bin/ssh"
   assert_contains "$(cat "$root/ssh.log")" "ops@172.20.20.11"
 }
 test_asa_exec_fails_with_hint_when_sshpass_missing() {
   local root out rc=0; root="$(make_tmpdir)"; make_asa_stubs "$root"
-  out="$(DOCKER="$root/bin/docker" SSHPASS="$root/bin/nonexistent" SSH="$root/bin/ssh" LAB_NAME=demo bash -c 'source "'"$REPO_ROOT"'/scripts/lib.sh"; asa_exec asa-hub "show version"' 2>&1)" || rc=$?
+  out="$(DOCKER="$root/bin/docker" SSHPASS_BIN="$root/bin/nonexistent" SSH="$root/bin/ssh" LAB_NAME=demo bash -c 'source "'"$REPO_ROOT"'/scripts/lib.sh"; asa_exec asa-hub "show version"' 2>&1)" || rc=$?
   assert_eq 1 "$rc"
   assert_contains "$out" "sshpass"
   assert_contains "$out" "install"
 }
 test_run_on_node_routes_asa_nodes_over_ssh() {
   local root out; root="$(make_tmpdir)"; make_asa_stubs "$root"
-  export DOCKER="$root/bin/docker" SSHPASS="$root/bin/sshpass" SSH="$root/bin/ssh" LAB_NAME=demo ASA_NODES="asa-hub asa-spoke1"
+  export DOCKER="$root/bin/docker" SSHPASS_BIN="$root/bin/sshpass" SSH="$root/bin/ssh" LAB_NAME=demo ASA_NODES="asa-hub asa-spoke1"
   out="$(_run_on_node asa-hub "show version")"
   assert_contains "$out" "Cisco Adaptive Security Appliance"
   assert_contains "$(cat "$root/ssh.log")" "admin@172.20.20.11 show version"
@@ -171,9 +181,9 @@ test_run_on_node_routes_asa_nodes_over_ssh() {
 }
 test_expect_contains_uses_asa_route() {
   local root; root="$(make_tmpdir)"; make_asa_stubs "$root"
-  DOCKER="$root/bin/docker" SSHPASS="$root/bin/sshpass" SSH="$root/bin/ssh" LAB_NAME=demo ASA_NODES="asa-hub" \
+  DOCKER="$root/bin/docker" SSHPASS_BIN="$root/bin/sshpass" SSH="$root/bin/ssh" LAB_NAME=demo ASA_NODES="asa-hub" \
     assert_succeeds expect_contains asa-hub "show crypto ikev2 sa" "203.0.113.3"
-  DOCKER="$root/bin/docker" SSHPASS="$root/bin/sshpass" SSH="$root/bin/ssh" LAB_NAME=demo ASA_NODES="asa-hub" \
+  DOCKER="$root/bin/docker" SSHPASS_BIN="$root/bin/sshpass" SSH="$root/bin/ssh" LAB_NAME=demo ASA_NODES="asa-hub" \
     assert_succeeds expect_not_contains asa-hub "show crypto ipsec sa peer 203.0.113.2 | include pkts encaps" "#pkts encaps: 0"
 }
 

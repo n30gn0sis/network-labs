@@ -9,7 +9,7 @@ source "${LIB_SH:?run this via scripts/verify.sh}"
 # ASA nodes are reached over SSH (asa_exec); hosts via docker exec.
 export ASA_NODES="asa-hub asa-spoke1 asa-spoke2"
 
-boot_timeout="${ASA_BOOT_TIMEOUT:-300}"   # ASAv takes 2-4 minutes to boot
+boot_timeout="${ASA_BOOT_TIMEOUT:-600}"   # ASAv takes 5-7 minutes to boot
 sa_timeout="${ASA_SA_TIMEOUT:-120}"
 ike=ikev2
 # shellcheck disable=SC2153  # VARIANT is exported by scripts/verify.sh
@@ -25,9 +25,11 @@ expect_contains h1 "ping -c 2 -W 2 10.1.0.1" "2 received"
 expect_contains h2 "ping -c 2 -W 2 10.2.0.1" "2 received"
 expect_contains h3 "ping -c 2 -W 2 10.3.0.1" "2 received"
 
-log "== 3. Tunnels establish (crypto maps need interesting traffic; VTI comes up on its own)"
+log "== 3. Tunnels establish (crypto maps need interesting traffic; VTI comes up on its own; spoke-to-spoke SAs are warmed up too)"
 node_exec h2 "ping -c 3 -W 2 10.1.0.10" >/dev/null 2>&1 || true
 node_exec h3 "ping -c 3 -W 2 10.1.0.10" >/dev/null 2>&1 || true
+node_exec h2 "ping -c 3 -W 2 10.3.0.10" >/dev/null 2>&1 || true
+node_exec h3 "ping -c 3 -W 2 10.2.0.10" >/dev/null 2>&1 || true
 wait_for "$sa_timeout" asa-hub "show crypto $ike sa" "203.0.113.2"
 wait_for "$sa_timeout" asa-hub "show crypto $ike sa" "203.0.113.3"
 

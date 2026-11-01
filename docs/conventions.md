@@ -68,7 +68,11 @@ by default. A scenario whose nodes cannot be driven that way (QEMU-based network
 behind vrnetlab, such as ASAv) exports `ASA_NODES="<node> <node> ..."`; the verbs then
 reach those nodes over SSH to their containerlab management address via `asa_exec`.
 `asa_exec` uses `sshpass` and `ssh`, with `ASA_USER` (default `admin`), `ASA_PASS`
-(default `Admin@123`), `SSH` and `SSHPASS` overridable from the environment.
+(default `CiscoAsa1!`), `SSH` and `SSHPASS_BIN` (the sshpass binary path) overridable
+from the environment. `ASA_SSH_TIMEOUT` (default 30 seconds) bounds each SSH call via
+coreutils `timeout`. The ASAv scenario's `verify.sh` also honours `ASA_BOOT_TIMEOUT`
+(default 600) and `ASA_SA_TIMEOUT` (default 120). If a server ignores SSH exec
+requests, feed the commands on stdin instead of as an ssh argument.
 
 ## Development tools
 

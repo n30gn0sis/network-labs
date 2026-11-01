@@ -77,7 +77,7 @@ exactly what moving from IKEv1 to IKEv2 changes.
    `topology.clab.yml` and `scenario.yml` to match your build.
 2. Bring up a variant: `scripts/up.sh asa-hub-spoke-ipsec --force [--variant cryptomap-ikev2|cryptomap-ikev1]`
    (`--force` while the scenario is `draft`).
-3. Wait for the ASAs to boot (2–4 minutes), then run the verification.
+3. Wait for the ASAs to boot (ASAv takes 5–7 minutes to boot), then run the verification.
 
 ## Verification
 
@@ -92,10 +92,19 @@ exactly what moving from IKEv1 to IKEv2 changes.
 5. h2 pings h3 through the hub.
 6. VTI variant only: `Tunnel1` and `Tunnel2` on the hub are up/up.
 
-SSH defaults are vrnetlab's `admin` / `Admin@123`; override with `ASA_USER` and
-`ASA_PASS`. `sshpass` and an `ssh` client must be installed.
+SSH defaults are vrnetlab's `admin` / `CiscoAsa1!`; override with `ASA_USER` and
+`ASA_PASS`. `sshpass`, `ssh` and coreutils `timeout` must be installed. Other knobs:
+`ASA_BOOT_TIMEOUT` (default 600 seconds to wait for the ASAs to boot), `ASA_SA_TIMEOUT`
+(120, wait for the tunnels' SAs) and `ASA_SSH_TIMEOUT` (30, per SSH call). `SSHPASS_BIN`
+and `SSH` override the binaries.
 
-Newer OpenSSH clients (8.8+) may refuse older ASA host-key algorithms; if `asa_exec`
+If `asa_exec` returns an interactive banner instead of command output, your ASA's SSH
+server does not support exec requests; run the validation with the commands fed on stdin
+(see conventions) — confirm with `ssh admin@<mgmt-ip> "show version"` on a real ASAv
+before flipping status to ready.
+
+vrnetlab-built images use an ECDSA host key, so no SSH client changes are normally
+needed. The `ssh-rsa` settings are only a fallback for hand-built images: if `asa_exec`
 fails with a key-exchange or host-key error, add `HostKeyAlgorithms +ssh-rsa` and
 `PubkeyAcceptedAlgorithms +ssh-rsa` for the management subnet in `~/.ssh/config`.
 
@@ -108,7 +117,7 @@ vrnetlab ASAv image:
 ```bash
 for v in vti-ikev2 cryptomap-ikev2 cryptomap-ikev1; do
   scripts/up.sh asa-hub-spoke-ipsec --force --variant "$v"
-  scripts/verify.sh asa-hub-spoke-ipsec --variant "$v"
+  scripts/verify.sh asa-hub-spoke-ipsec --variant "$v" || { echo "FAIL $v"; break; }
   scripts/down.sh asa-hub-spoke-ipsec --variant "$v"
 done
 ```
