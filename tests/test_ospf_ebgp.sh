@@ -219,9 +219,9 @@ case "\$cmd" in
     if [[ "\$mode" == bgp-active ]]; then echo '"bgpState":"Active"'; else echo '"bgpState":"Established"'; fi ;;
   *"show ip route bgp"*)
     if [[ "\$node" == r3 ]]; then echo "B>* 10.2.0.0/16 [20/0] via 192.0.2.2, eth3"; else echo "B>* 10.1.0.0/16 [20/0] via 192.0.2.1, eth1"; fi ;;
+  *"grep '10.1.0.3/32'"*)
+    if [[ -e "\$flag" && "\$mode" != no-reroute ]]; then echo "O>* 10.1.0.3/32 [110/20] via 10.1.12.2, eth3, weight 1, 00:00:05"; else echo "O>* 10.1.0.3/32 [110/10] via 10.1.13.2, eth2, weight 1, 00:10:00"; fi ;;
   *"show ip route ospf"*) echo "O>* 0.0.0.0/0 [110/1] via 10.1.13.2, eth2" ;;
-  *"show ip route 10.1.0.3/32"*)
-    if [[ -e "\$flag" && "\$mode" != no-reroute ]]; then echo "O>* 10.1.0.3/32 [110/20] via 10.1.12.2, eth3"; else echo "O>* 10.1.0.3/32 [110/10] via 10.1.13.2, eth2"; fi ;;
   *ping*) echo "5 packets transmitted, 5 received, 0% packet loss" ;;
   *traceroute*)
     echo " 1  10.1.100.1  0.1 ms"
@@ -252,7 +252,7 @@ test_verify_fails_when_ospf_stuck() {
   local root out rc=0; root="$(make_tmpdir)"; make_frr_stub "$root" ospf-stuck
   out="$(run_verify "$root" 2>&1)" || rc=$?
   assert_eq 1 "$rc"
-  assert_contains "$out" "error: r1:"
+  assert_contains "$out" "grep -c Full' did not contain '2'"
   assert_not_contains "$(cat "$root/docker.log")" "ip link set eth2 down" "failover never reached"
 }
 test_verify_fails_when_bgp_active() {
@@ -265,7 +265,7 @@ test_verify_fails_when_no_reroute_and_still_restores_link() {
   local root out rc=0; root="$(make_tmpdir)"; make_frr_stub "$root" no-reroute
   out="$(run_verify "$root" 2>&1)" || rc=$?
   assert_eq 1 "$rc"
-  assert_contains "$out" "show ip route 10.1.0.3/32'' did not contain 'via 10.1.12.2'"
+  assert_contains "$out" "grep '10.1.0.3/32'' did not contain 'via 10.1.12.2'"
   assert_eq "ip link set eth2 up" "$(grep -o 'ip link set eth2 [a-z]*' "$root/docker.log" | tail -1)" "trap restored the link"
   [[ ! -e "$root/eth2_down" ]] || return 1
 }

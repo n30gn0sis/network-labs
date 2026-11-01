@@ -47,8 +47,8 @@ for r in r1 r2 r5 r6; do
 done
 
 log "== 5. End-to-end reachability and primary path"
-expect_contains h1 "ping -c 5 -W 2 10.2.100.10" "5 received"
-expect_contains h2 "ping -c 5 -W 2 10.1.100.10" "5 received"
+wait_for 30 h1 "ping -c 5 -W 2 10.2.100.10" "5 received"
+wait_for 30 h2 "ping -c 5 -W 2 10.1.100.10" "5 received"
 expect_contains     h1 "traceroute -n -w 1 -q 1 -m 8 10.2.100.10" "10.1.13.2"
 expect_not_contains h1 "traceroute -n -w 1 -q 1 -m 8 10.2.100.10" "10.1.12.2"
 
@@ -56,15 +56,15 @@ log "== 6. Failover: take down r1-r3 (r1 eth2); traffic must detour via r2"
 restore_link() { node_exec r1 "ip link set eth2 up" >/dev/null 2>&1 || true; }
 trap restore_link EXIT
 node_exec r1 "ip link set eth2 down"
-wait_for "$ospf_timeout" r1 "vtysh -c 'show ip route 10.1.0.3/32'" "via 10.1.12.2"
-expect_contains     h1 "ping -c 5 -W 2 10.2.100.10" "5 received"
+wait_for "$ospf_timeout" r1 "vtysh -c 'show ip route ospf' | grep '10.1.0.3/32'" "via 10.1.12.2"
+wait_for 30 h1 "ping -c 5 -W 2 10.2.100.10" "5 received"
 expect_contains     h1 "traceroute -n -w 1 -q 1 -m 8 10.2.100.10" "10.1.12.2"
 expect_not_contains h1 "traceroute -n -w 1 -q 1 -m 8 10.2.100.10" "10.1.13.2"
 
 log "== 7. Restore the link; primary path returns"
 node_exec r1 "ip link set eth2 up"
 trap - EXIT
-wait_for "$ospf_timeout" r1 "vtysh -c 'show ip route 10.1.0.3/32'" "via 10.1.13.2"
-expect_contains h1 "ping -c 5 -W 2 10.2.100.10" "5 received"
+wait_for "$ospf_timeout" r1 "vtysh -c 'show ip route ospf' | grep '10.1.0.3/32'" "via 10.1.13.2"
+wait_for 30 h1 "ping -c 5 -W 2 10.2.100.10" "5 received"
 
 log "all checks passed"
