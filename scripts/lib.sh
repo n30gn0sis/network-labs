@@ -152,8 +152,29 @@ node_exec() {
   "${DOCKER:-docker}" exec "clab-${LAB_NAME}-${node}" sh -c "$cmd"
 }
 
-# asa_exec NODE CMD -> replaced in Task 2 (SSH to the ASA's management address)
-asa_exec() { fail "asa_exec not implemented"; }
+# node_mgmt_ip NODE -> IPv4 address of clab-<lab>-NODE on the containerlab management network
+node_mgmt_ip() {
+  local node="$1" ip
+  [[ -n "${LAB_NAME:-}" ]] || fail "LAB_NAME is not set; run via scripts/verify.sh"
+  ip="$("${DOCKER:-docker}" inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "clab-${LAB_NAME}-${node}")" || true
+  [[ -n "$ip" ]] || fail "could not determine management IP of clab-${LAB_NAME}-${node}"
+  printf '%s\n' "$ip"
+}
+
+# asa_exec NODE CMD -> runs CMD on an ASA over SSH to its management address.
+# Env: ASA_USER (admin), ASA_PASS (Admin@123), SSH (ssh), SSHPASS (sshpass).
+asa_exec() {
+  local node="$1" cmd="$2" ip
+  local sshpass_bin="${SSHPASS:-sshpass}" ssh_bin="${SSH:-ssh}"
+  command -v "$sshpass_bin" >/dev/null 2>&1 \
+    || fail "'$sshpass_bin' not found; ASA checks need sshpass (install: apt install sshpass / brew install hudochenkov/sshpass/sshpass)"
+  command -v "$ssh_bin" >/dev/null 2>&1 || fail "'$ssh_bin' not found; ASA checks need an ssh client"
+  ip="$(node_mgmt_ip "$node")"
+  "$sshpass_bin" -p "${ASA_PASS:-Admin@123}" "$ssh_bin" \
+    -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+    -o ConnectTimeout=5 -o LogLevel=ERROR \
+    "${ASA_USER:-admin}@${ip}" "$cmd"
+}
 
 # _run_on_node NODE CMD -> runs CMD on NODE. Nodes listed in $ASA_NODES (space-separated,
 # exported by a scenario's verify.sh) are reached over SSH via asa_exec; others via docker exec.
@@ -162,7 +183,6 @@ _run_on_node() {
   for n in ${ASA_NODES:-}; do
     if [[ "$n" == "$node" ]]; then
       asa_exec "$node" "$cmd"
-      # shellcheck disable=SC2317  # unreachable only while asa_exec is the always-failing stub
       return
     fi
   done
