@@ -33,9 +33,11 @@ wait_for "$sa_timeout" asa-hub "show crypto $ike sa" "203.0.113.3"
 
 log "== 4. Traffic is encrypted (encaps counters non-zero on the hub)"
 expect_contains h2 "ping -c 5 -W 2 10.1.0.10" "5 received"
-expect_not_contains asa-hub "show crypto ipsec sa peer 203.0.113.2 | include pkts encaps" "#pkts encaps: 0"
+expect_contains     asa-hub "show crypto ipsec sa peer 203.0.113.2 | include pkts encaps" "#pkts encaps: "
+expect_not_contains asa-hub "show crypto ipsec sa peer 203.0.113.2 | include pkts encaps" "#pkts encaps: 0,"
 expect_contains h3 "ping -c 5 -W 2 10.1.0.10" "5 received"
-expect_not_contains asa-hub "show crypto ipsec sa peer 203.0.113.3 | include pkts encaps" "#pkts encaps: 0"
+expect_contains     asa-hub "show crypto ipsec sa peer 203.0.113.3 | include pkts encaps" "#pkts encaps: "
+expect_not_contains asa-hub "show crypto ipsec sa peer 203.0.113.3 | include pkts encaps" "#pkts encaps: 0,"
 
 log "== 5. Spoke-to-spoke through the hub"
 expect_contains h2 "ping -c 5 -W 2 10.3.0.10" "5 received"

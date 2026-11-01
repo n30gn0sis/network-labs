@@ -255,7 +255,7 @@ test_cryptomap_variants_differ_only_in_ike_version() {
 # Stubs that model a healthy lab: hosts answer pings, ASAs answer show commands.
 # IKE=ikev1|ikev2 selects which `show crypto ... sa` returns peers; BROKEN=1 makes spoke2 unreachable.
 make_lab_stubs() {
-  local root="$1" ike="$2" broken="${3:-0}"
+  local root="$1" ike="$2" broken="${3:-0}" encaps="${4:-17}"
   mkdir -p "$root/bin"
   cat >"$root/bin/docker" <<STUB
 #!/usr/bin/env bash
@@ -278,7 +278,7 @@ case "\$*" in
   *"show version"*) echo "Cisco Adaptive Security Appliance Software Version 9.18(4)" ;;
   *"show crypto $ike sa"*) echo "Peer 203.0.113.2 READY"; echo "Peer 203.0.113.3 READY" ;;
   *"show crypto ikev"*) echo "There are no IKE SAs" ;;
-  *"pkts encaps"*) echo "      #pkts encaps: 17, #pkts encrypt: 17" ;;
+  *"pkts encaps"*) if [[ "$encaps" != none ]]; then echo "      #pkts encaps: $encaps, #pkts encrypt: $encaps"; fi ;;
   *"show interface Tunnel"*) echo "Interface Tunnel1 \"vti-spoke1\", is up, line protocol is up" ;;
   *) echo "unknown" ;;
 esac
@@ -329,6 +329,19 @@ test_verify_fails_when_ike_sa_missing() {
   out="$(run_verify "$root" vti-ikev2 2>&1)" || rc=$?                     # variant asks for ikev2
   assert_eq 1 "$rc"
   assert_contains "$out" "show crypto ikev2 sa' did not contain '203.0.113.2'"
+}
+
+test_verify_fails_when_no_traffic_encrypted() {
+  local root out rc=0; root="$(make_tmpdir)"; make_lab_stubs "$root" ikev2 0 0
+  out="$(run_verify "$root" vti-ikev2 2>&1)" || rc=$?
+  assert_eq 1 "$rc"
+  assert_contains "$out" "unexpectedly contained '#pkts encaps: 0,'"
+}
+test_verify_fails_when_ipsec_sa_output_empty() {
+  local root out rc=0; root="$(make_tmpdir)"; make_lab_stubs "$root" ikev2 0 none
+  out="$(run_verify "$root" vti-ikev2 2>&1)" || rc=$?
+  assert_eq 1 "$rc"
+  assert_contains "$out" "did not contain '#pkts encaps: '"
 }
 
 run_tests
