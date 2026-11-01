@@ -252,4 +252,83 @@ test_cryptomap_variants_differ_only_in_ike_version() {
   done
 }
 
+# Stubs that model a healthy lab: hosts answer pings, ASAs answer show commands.
+# IKE=ikev1|ikev2 selects which `show crypto ... sa` returns peers; BROKEN=1 makes spoke2 unreachable.
+make_lab_stubs() {
+  local root="$1" ike="$2" broken="${3:-0}"
+  mkdir -p "$root/bin"
+  cat >"$root/bin/docker" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"$root/docker.log"
+case "\$*" in
+  inspect*asa-hub) echo "172.20.20.11" ;;
+  inspect*asa-spoke1) echo "172.20.20.12" ;;
+  inspect*asa-spoke2) echo "172.20.20.13" ;;
+  *"ping"*"10.3.0.10"*) if [[ "$broken" == 1 ]]; then echo "5 packets transmitted, 0 received, 100% packet loss"; else echo "5 packets transmitted, 5 received, 0% packet loss"; fi ;;
+  *"ping -c 2"*) echo "2 packets transmitted, 2 received, 0% packet loss" ;;
+  *"ping -c 3"*) echo "3 packets transmitted, 3 received, 0% packet loss" ;;
+  *"ping -c 5"*) echo "5 packets transmitted, 5 received, 0% packet loss" ;;
+  *) echo "unknown" ;;
+esac
+STUB
+  cat >"$root/bin/sshpass" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"$root/ssh.log"
+case "\$*" in
+  *"show version"*) echo "Cisco Adaptive Security Appliance Software Version 9.18(4)" ;;
+  *"show crypto $ike sa"*) echo "Peer 203.0.113.2 READY"; echo "Peer 203.0.113.3 READY" ;;
+  *"show crypto ikev"*) echo "There are no IKE SAs" ;;
+  *"pkts encaps"*) echo "      #pkts encaps: 17, #pkts encrypt: 17" ;;
+  *"show interface Tunnel"*) echo "Interface Tunnel1 \"vti-spoke1\", is up, line protocol is up" ;;
+  *) echo "unknown" ;;
+esac
+STUB
+  printf '#!/usr/bin/env bash\necho "ssh must be invoked via sshpass stub" >&2; exit 99\n' >"$root/bin/ssh"
+  chmod +x "$root/bin/docker" "$root/bin/sshpass" "$root/bin/ssh"
+}
+run_verify() { # root variant
+  LIB_REPO_ROOT="$REPO_ROOT" DOCKER="$1/bin/docker" SSHPASS="$1/bin/sshpass" SSH="$1/bin/ssh" \
+    WAIT_INTERVAL=1 ASA_BOOT_TIMEOUT=2 ASA_SA_TIMEOUT=2 \
+    "$REPO_ROOT/scripts/verify.sh" asa-hub-spoke-ipsec --variant "$2"
+}
+test_verify_passes_for_vti_against_healthy_stubs() {
+  local root out; root="$(make_tmpdir)"; make_lab_stubs "$root" ikev2
+  out="$(run_verify "$root" vti-ikev2 2>&1)"
+  assert_contains "$out" "all checks passed"
+  local ssh; ssh="$(cat "$root/ssh.log")"
+  assert_contains "$ssh" "admin@172.20.20.11 show crypto ikev2 sa"
+  assert_contains "$ssh" "show crypto ipsec sa peer 203.0.113.2 | include pkts encaps"
+  assert_contains "$ssh" "show crypto ipsec sa peer 203.0.113.3 | include pkts encaps"
+  assert_contains "$ssh" "show interface Tunnel1 | include line protocol"
+  assert_contains "$ssh" "show interface Tunnel2 | include line protocol"
+  local dk; dk="$(cat "$root/docker.log")"
+  assert_contains "$dk" "exec clab-asa-hub-spoke-ipsec-h2 sh -c ping -c 5 -W 2 10.3.0.10"
+  assert_not_contains "$dk" "exec clab-asa-hub-spoke-ipsec-asa-hub"
+}
+test_verify_uses_ikev1_show_for_ikev1_variant() {
+  local root out; root="$(make_tmpdir)"; make_lab_stubs "$root" ikev1
+  out="$(run_verify "$root" cryptomap-ikev1 2>&1)"
+  assert_contains "$out" "all checks passed"
+  assert_contains "$(cat "$root/ssh.log")" "show crypto ikev1 sa"
+  assert_not_contains "$(cat "$root/ssh.log")" "show interface Tunnel"
+}
+test_verify_cryptomap_ikev2_skips_tunnel_interface_checks() {
+  local root out; root="$(make_tmpdir)"; make_lab_stubs "$root" ikev2
+  out="$(run_verify "$root" cryptomap-ikev2 2>&1)"
+  assert_contains "$out" "all checks passed"
+  assert_not_contains "$(cat "$root/ssh.log")" "show interface Tunnel"
+}
+test_verify_fails_when_spoke_to_spoke_ping_fails() {
+  local root out rc=0; root="$(make_tmpdir)"; make_lab_stubs "$root" ikev2 1
+  out="$(run_verify "$root" vti-ikev2 2>&1)" || rc=$?
+  assert_eq 1 "$rc"
+  assert_contains "$out" "error: h2: 'ping -c 5 -W 2 10.3.0.10'"
+}
+test_verify_fails_when_ike_sa_missing() {
+  local root out rc=0; root="$(make_tmpdir)"; make_lab_stubs "$root" ikev1   # stub answers ikev1 only
+  out="$(run_verify "$root" vti-ikev2 2>&1)" || rc=$?                     # variant asks for ikev2
+  assert_eq 1 "$rc"
+  assert_contains "$out" "show crypto ikev2 sa' did not contain '203.0.113.2'"
+}
+
 run_tests
