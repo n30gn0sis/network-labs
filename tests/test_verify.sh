@@ -83,5 +83,22 @@ test_verify_exports_variant_and_lab_name() {
   assert_contains "$out" "LAB=demo VARIANT=frr"
 }
 test_verify_fails_for_unknown_scenario() { setup_repo; assert_fails env LIB_REPO_ROOT="$ROOT" "$VERIFY" nope; }
+test_expect_not_contains_passes_when_absent() {
+  local root; root="$(make_tmpdir)"; make_docker_stub "$root"
+  DOCKER="$root/bin/docker" LAB_NAME=demo assert_succeeds expect_not_contains r1 "vtysh -c 'show version'" "Junos"
+}
+test_expect_not_contains_fails_when_present() {
+  local root out rc=0; root="$(make_tmpdir)"; make_docker_stub "$root"
+  out="$(DOCKER="$root/bin/docker" LAB_NAME=demo bash -c 'source "'"$REPO_ROOT"'/scripts/lib.sh"; expect_not_contains r1 "vtysh -c \"show version\"" "FRRouting"' 2>&1)" || rc=$?
+  assert_eq 1 "$rc"
+  assert_contains "$out" "error: r1:"
+  assert_contains "$out" "unexpectedly contained 'FRRouting'"
+}
+test_run_on_node_defaults_to_node_exec() {
+  local root; root="$(make_tmpdir)"; make_docker_stub "$root"
+  local out; out="$(DOCKER="$root/bin/docker" LAB_NAME=demo ASA_NODES="" _run_on_node r1 "vtysh -c 'show version'")"
+  assert_eq "FRRouting 10.1" "$out"
+  assert_contains "$(cat "$root/docker.log")" "exec clab-demo-r1"
+}
 
 run_tests

@@ -152,9 +152,26 @@ node_exec() {
   "${DOCKER:-docker}" exec "clab-${LAB_NAME}-${node}" sh -c "$cmd"
 }
 
+# asa_exec NODE CMD -> replaced in Task 2 (SSH to the ASA's management address)
+asa_exec() { fail "asa_exec not implemented"; }
+
+# _run_on_node NODE CMD -> runs CMD on NODE. Nodes listed in $ASA_NODES (space-separated,
+# exported by a scenario's verify.sh) are reached over SSH via asa_exec; others via docker exec.
+_run_on_node() {
+  local node="$1" cmd="$2" n
+  for n in ${ASA_NODES:-}; do
+    if [[ "$n" == "$node" ]]; then
+      asa_exec "$node" "$cmd"
+      # shellcheck disable=SC2317  # unreachable only while asa_exec is the always-failing stub
+      return
+    fi
+  done
+  node_exec "$node" "$cmd"
+}
+
 expect_contains() {
   local node="$1" cmd="$2" expected="$3" out
-  out="$(node_exec "$node" "$cmd" 2>&1)" || true
+  out="$(_run_on_node "$node" "$cmd" 2>&1)" || true
   if [[ "$out" == *"$expected"* ]]; then
     log "ok: $node: $cmd"
   else
@@ -162,11 +179,21 @@ expect_contains() {
   fi
 }
 
+expect_not_contains() {
+  local node="$1" cmd="$2" unexpected="$3" out
+  out="$(_run_on_node "$node" "$cmd" 2>&1)" || true
+  if [[ "$out" == *"$unexpected"* ]]; then
+    fail "$node: '$cmd' output unexpectedly contained '$unexpected'. Output: $out"
+  else
+    log "ok: $node: $cmd (no '$unexpected')"
+  fi
+}
+
 wait_for() {
   local timeout="$1" node="$2" cmd="$3" expected="$4"
   local interval="${WAIT_INTERVAL:-2}" elapsed=0 out
   while true; do
-    out="$(node_exec "$node" "$cmd" 2>&1)" || true
+    out="$(_run_on_node "$node" "$cmd" 2>&1)" || true
     if [[ "$out" == *"$expected"* ]]; then
       log "ok: $node: $cmd (after ${elapsed}s)"
       return 0
