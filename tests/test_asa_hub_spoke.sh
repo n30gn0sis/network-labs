@@ -344,4 +344,19 @@ test_verify_fails_when_ipsec_sa_output_empty() {
   assert_contains "$out" "did not contain '#pkts encaps: '"
 }
 
+test_readme_documents_scenario() {
+  local r; r="$(cat "$SCN/README.md")"
+  assert_contains "$r" "## Objective"
+  assert_contains "$r" "## Topology"
+  assert_contains "$r" "## Variants"
+  assert_contains "$r" "## Verification"
+  assert_contains "$r" "## Validation on a containerlab host"
+  assert_contains "$r" "GigabitEthernet1/1"
+  assert_contains "$r" "BVI"
+  assert_contains "$r" "LAB-PSK"
+  assert_contains "$r" "hairpin"
+  assert_contains "$r" "vrnetlab"
+  assert_contains "$r" "scripts/up.sh asa-hub-spoke-ipsec --force"
+}
+
 run_tests

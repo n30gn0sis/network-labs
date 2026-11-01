@@ -62,11 +62,19 @@ All scripts use `set -euo pipefail`, print usage on `-h`, and validate
 arguments and `scenario.yml` before doing anything. Binaries are overridable
 for testing: `CLAB` (containerlab), `DOCKER` (docker).
 
+Scenario `verify.sh` files use four verbs from `scripts/lib.sh`: `expect_contains`,
+`expect_not_contains`, `wait_for` and `node_exec`. Nodes are reached with `docker exec`
+by default. A scenario whose nodes cannot be driven that way (QEMU-based network OSes
+behind vrnetlab, such as ASAv) exports `ASA_NODES="<node> <node> ..."`; the verbs then
+reach those nodes over SSH to their containerlab management address via `asa_exec`.
+`asa_exec` uses `sshpass` and `ssh`, with `ASA_USER` (default `admin`), `ASA_PASS`
+(default `Admin@123`), `SSH` and `SSHPASS` overridable from the environment.
+
 ## Development tools
 
 Runtime: `bash`, `docker`, `containerlab`, `git`, and `yq` **v4 from
 mikefarah** (https://github.com/mikefarah/yq). The Python `yq` jq-wrapper is a
-different program and is rejected by the scripts.
+different program and is rejected by the scripts. Scenarios that set `ASA_NODES` additionally need `ssh` and `sshpass` at run time (not for the tests).
 
 Development: `shellcheck`. Run `scripts/test.sh` before committing; CI runs
 the same script.

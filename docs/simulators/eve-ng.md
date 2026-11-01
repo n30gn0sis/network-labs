@@ -22,6 +22,7 @@ Until a converter exists, `export/eve-ng/<name>.unl` is written by hand from
 | `nokia_srlinux` | `ghcr.io/nokia/srlinux` | `docker` node (privileged) |
 | `ceos` | `ceos:<version>` | `docker` node |
 | `cisco_c8000v` | vendor QEMU image | `c8000v` QEMU template |
+| `cisco_asav` | vendor QEMU image | `asav` QEMU template |
 | `juniper_vjunosswitch` | vendor QEMU image | `vjunosswitch` QEMU template |
 
 ## Hand-written export rules

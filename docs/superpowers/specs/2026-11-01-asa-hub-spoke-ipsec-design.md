@@ -47,7 +47,7 @@ to `scripts/lib.sh`.
       asa-hub (.1)                  asa-spoke1 (.1)               asa-spoke2 (.1)
           | outside 203.0.113.1          | outside 203.0.113.2         | outside 203.0.113.3
           +------------------------------+-----------------------------+
-                               wan  203.0.113.0/24  (one clab bridge)
+                               wan  203.0.113.0/24  (Linux container acting as a bridge)
 ```
 
 | Node | Kind | Image | Role |
@@ -55,7 +55,7 @@ to `scripts/lib.sh`.
 | `asa-hub` | `cisco_asav` | `vrnetlab/cisco_asav:<tag>` | hub, outside 203.0.113.1, inside 10.1.0.1 |
 | `asa-spoke1` | `cisco_asav` | same | spoke, outside 203.0.113.2, inside 10.2.0.1 |
 | `asa-spoke2` | `cisco_asav` | same | spoke, outside 203.0.113.3, inside 10.3.0.1 |
-| `h1`, `h2`, `h3` | `linux` | `wbitt/network-multitool` | 10.x.0.10/24, default route to their ASA, set via `exec:` |
+| `h1`, `h2`, `h3` | `linux` | `wbitt/network-multitool` | 10.x.0.10/24, route to 10.0.0.0/8 via their ASA, set via `exec:` |
 | `wan` | `linux` | `wbitt/network-multitool` | Linux container bridging its three ports (br0); flat stand-in for the internet. A containerlab `bridge` kind would need a pre-created host bridge. |
 
 Links: each ASA `GigabitEthernet0/0` → `wan`; each ASA `GigabitEthernet0/1` →
@@ -184,7 +184,7 @@ minimum ASA version (9.8 for `vti-ikev2`; any 9.x for the others).
 - `scenario.yml` validates; `name` equals the directory; status is `draft`
   until a real run passes.
 - For each variant, `build_topology` output has exactly three `cisco_asav`
-  nodes and three `linux` nodes, one `linux` node named `wan`, six links, and every
+  nodes and four `linux` nodes (h1–h3 and `wan`), six links, and every
   `startup-config` path exists relative to the built file.
 - Each variant's hub config contains its marker: `interface Tunnel1` and
   `tunnel protection ipsec profile` for `vti-ikev2`; `crypto map OUTSIDE_MAP

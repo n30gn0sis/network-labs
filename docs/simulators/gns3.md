@@ -21,6 +21,7 @@ under `simulators.gns3`.
 | `nokia_srlinux` | `ghcr.io/nokia/srlinux` | Docker template, privileged |
 | `ceos` | `ceos:<version>` | Docker template (import image from Arista) |
 | `cisco_c8000v` (vrnetlab) | vendor QEMU image | Cisco C8000v QEMU appliance |
+| `cisco_asav` | vendor QEMU image (vrnetlab) | Cisco ASAv QEMU appliance (asav qcow2, 2 GB RAM, e1000 NICs) |
 | `juniper_vjunosswitch` | vendor QEMU image | vJunos-switch QEMU appliance |
 
 ## Hand-written export rules

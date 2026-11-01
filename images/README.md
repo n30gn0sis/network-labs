@@ -22,5 +22,13 @@ as the variant's `topology.patch.yml` expects, e.g.
 image using that simulator's own procedure; the mapping tables in
 `docs/simulators/` give the template names.
 
+| Role | Image tag used in this repo | Source |
+|---|---|---|
+| Firewall (Cisco ASAv) | `vrnetlab/cisco_asav:<version>` (scenarios use `9.18.4`) | ASAv qcow2 from Cisco (licensed); build with vrnetlab `asav/` and `docker tag` to match |
+
+ASAv notes: vrnetlab bootstraps the `admin` user with password `Admin@123` and SSH on
+`Management0/0`; scenario startup configs are applied after that bootstrap and must not
+change it. The VTI scenario variants need ASA 9.8 or newer.
+
 A variant's `notes:` field in `scenario.yml` should say which image build the
 scenario was tested with.
