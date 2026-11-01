@@ -220,4 +220,36 @@ test_cryptomap_ikev2_configs() {
   assert_not_contains "$hub" "ikev1"
 }
 
+test_cryptomap_ikev1_patch_only_repoints_startup_configs() {
+  local p; p="$SCN/variants/cryptomap-ikev1/topology.patch.yml"
+  assert_file_exists "$p"
+  assert_eq "startup-config" "$(yq -r '[.topology.nodes[] | keys[]] | unique | join(" ")' "$p")"
+  assert_eq "variants/cryptomap-ikev1/configs/asa-spoke2/startup.cfg" "$(yq -r '.topology.nodes["asa-spoke2"]["startup-config"]' "$p")"
+}
+test_cryptomap_ikev1_configs() {
+  assert_cryptomap_structure cryptomap-ikev1 ikev1
+  local hub s1; hub="$(cat "$(cfg_of cryptomap-ikev1 asa-hub)")"; s1="$(cat "$(cfg_of cryptomap-ikev1 asa-spoke1)")"
+  assert_contains "$hub" "crypto ikev1 policy 10"
+  assert_contains "$hub" " authentication pre-share"
+  assert_contains "$hub" " encryption aes-256"
+  assert_contains "$hub" " hash sha"
+  assert_contains "$hub" " group 14"
+  assert_contains "$hub" "crypto ipsec ikev1 transform-set AES256-SHA esp-aes-256 esp-sha-hmac"
+  assert_contains "$hub" "crypto map OUTSIDE_MAP 10 set ikev1 transform-set AES256-SHA"
+  assert_contains "$hub" "crypto map OUTSIDE_MAP 20 set ikev1 transform-set AES256-SHA"
+  assert_contains "$hub" " ikev1 pre-shared-key LAB-PSK-SPOKE1"
+  assert_contains "$s1" " ikev1 pre-shared-key LAB-PSK-SPOKE1"
+  assert_not_contains "$hub" "ikev2"
+  assert_not_contains "$s1" "ikev2"
+}
+test_cryptomap_variants_differ_only_in_ike_version() {
+  # Strip IKE-specific lines; what remains must be identical between the two crypto-map variants.
+  local n a b
+  for n in asa-hub asa-spoke1 asa-spoke2; do
+    a="$(grep -vE 'ikev[12]|transform-set|ipsec-proposal|GCM|integrity|prf |encryption|hash sha|group 1[49]|lifetime|authentication pre-share|^!' "$(cfg_of cryptomap-ikev2 "$n")")"
+    b="$(grep -vE 'ikev[12]|transform-set|ipsec-proposal|GCM|integrity|prf |encryption|hash sha|group 1[49]|lifetime|authentication pre-share|^!' "$(cfg_of cryptomap-ikev1 "$n")")"
+    assert_eq "$a" "$b" "$n non-IKE lines"
+  done
+}
+
 run_tests
