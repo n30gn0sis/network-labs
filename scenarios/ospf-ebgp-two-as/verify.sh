@@ -43,7 +43,7 @@ wait_for "$bgp_timeout" r4 "vtysh -c 'show ip route bgp'" "10.1.0.0/16"
 
 log "== 4. Interiors learn a default route from their border"
 for r in r1 r2 r5 r6; do
-  wait_for "$ospf_timeout" "$r" "vtysh -c 'show ip route ospf'" "0.0.0.0/0"
+  wait_for "$ospf_timeout" "$r" "vtysh -c 'show ip route ospf'" "O>* 0.0.0.0/0"
 done
 
 log "== 5. End-to-end reachability and primary path"

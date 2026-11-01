@@ -65,6 +65,17 @@ test_hosts_get_address_and_default_route() {
   assert_contains "$(yq -r '.topology.nodes.h2.exec | join("\n")' "$t")" "ip addr add 10.2.100.10/24 dev eth1"
   assert_contains "$(yq -r '.topology.nodes.h2.exec | join("\n")' "$t")" "ip route replace default via 10.2.100.1"
 }
+test_routers_drop_management_default_route() {
+  local t r e; t="$SCN/topology.clab.yml"
+  for r in $ROUTERS; do
+    e="$(R="$r" yq -r '.topology.nodes[strenv(R)].exec | join("\n")' "$t")"
+    assert_contains "$e" "ip route del default" "$r drops the management default"
+  done
+  for r in h1 h2; do
+    e="$(R="$r" yq -r '.topology.nodes[strenv(R)].exec | join("\n")' "$t")"
+    assert_not_contains "$e" "ip route del default" "$r keeps its own default handling"
+  done
+}
 test_verify_placeholder_is_executable_and_sources_lib() {
   [[ -x "$SCN/verify.sh" ]]
   # shellcheck disable=SC2016
@@ -221,7 +232,11 @@ case "\$cmd" in
     if [[ "\$node" == r3 ]]; then echo "B>* 10.2.0.0/16 [20/0] via 192.0.2.2, eth3"; else echo "B>* 10.1.0.0/16 [20/0] via 192.0.2.1, eth1"; fi ;;
   *"grep '10.1.0.3/32'"*)
     if [[ -e "\$flag" && "\$mode" != no-reroute ]]; then echo "O>* 10.1.0.3/32 [110/20] via 10.1.12.2, eth3, weight 1, 00:00:05"; else echo "O>* 10.1.0.3/32 [110/10] via 10.1.13.2, eth2, weight 1, 00:10:00"; fi ;;
-  *"show ip route ospf"*) echo "O>* 0.0.0.0/0 [110/1] via 10.1.13.2, eth2" ;;
+  *"show ip route ospf"*)
+    if [[ "\$mode" == kernel-default ]]; then
+      echo "K>* 0.0.0.0/0 [0/0] via 172.20.20.1, eth0"
+      echo "O   0.0.0.0/0 [110/1] via 10.1.13.2, eth2"
+    else echo "O>* 0.0.0.0/0 [110/1] via 10.1.13.2, eth2"; fi ;;
   *ping*) echo "5 packets transmitted, 5 received, 0% packet loss" ;;
   *traceroute*)
     echo " 1  10.1.100.1  0.1 ms"
@@ -260,6 +275,13 @@ test_verify_fails_when_bgp_active() {
   out="$(run_verify "$root" 2>&1)" || rc=$?
   assert_eq 1 "$rc"
   assert_contains "$out" "did not contain 'Established'"
+}
+test_verify_fails_when_ospf_default_not_selected() {
+  local root out rc=0; root="$(make_tmpdir)"; make_frr_stub "$root" kernel-default
+  out="$(run_verify "$root" 2>&1)" || rc=$?
+  assert_eq 1 "$rc"
+  assert_contains "$out" "did not contain 'O>* 0.0.0.0/0'"
+  assert_not_contains "$(cat "$root/docker.log")" "ip link set eth2 down" "fails before failover"
 }
 test_verify_fails_when_no_reroute_and_still_restores_link() {
   local root out rc=0; root="$(make_tmpdir)"; make_frr_stub "$root" no-reroute

@@ -66,6 +66,8 @@ mapping below is part of the topology, not derived from order.
 | r5–r6 | 10.2.56.0/30 | `r5:eth2` .1 | `r6:eth3` .2 |
 | r6–h2 | 10.2.100.0/24 | `r6:eth1` .1 | `h2:eth1` .10 |
 
+The six routers carry `exec: ip route del default` (see Routing design).
+
 Nine links, no bridge node. Hosts get their address and default route via
 `exec:` lines in the topology, as in the ASA scenario.
 
@@ -82,6 +84,11 @@ Nine links, no bridge node. Hosts get their address and default route via
   the primary is down.
 - Borders run `default-information originate always` so interiors learn
   0.0.0.0/0 toward the border (`r3` in AS 65001, `r4` in AS 65002).
+
+- Containerlab installs a management default route in every node; zebra
+  imports it as a kernel route (distance 0) that outranks the OSPF default
+  (distance 110). The routers delete it at startup with `exec: ip route del
+  default`; `docker exec` management access is unaffected.
 
 ### BGP
 
@@ -115,7 +122,7 @@ Timeouts: `OSPF_TIMEOUT` (default 90), `BGP_TIMEOUT` (default 120),
 1. **Daemons up:** `wait_for $BOOT_TIMEOUT <r> "vtysh -c 'show version'" "FRRouting"` for r1–r6.
 2. **OSPF adjacencies:** for each router, `wait_for $OSPF_TIMEOUT <r> "vtysh -c 'show ip ospf neighbor'" "<neighbour router-id>"` for each of its two expected neighbours (r1: 10.1.0.2 and 10.1.0.3; r2: 10.1.0.1, 10.1.0.3; r3: 10.1.0.1, 10.1.0.2; r4: 10.2.0.5, 10.2.0.6; r5: 10.2.0.4, 10.2.0.6; r6: 10.2.0.4, 10.2.0.5), then `wait_for $OSPF_TIMEOUT <r> "vtysh -c 'show ip ospf neighbor' | grep -c Full" "2"` and `expect_not_contains <r> "vtysh -c 'show ip ospf neighbor'" "ExStart"` / `"Exchange"` / `"Loading"` / `"Init"`. (Every router has exactly two OSPF neighbours, so `grep -c Full` prints the single line `2`.)
 3. **eBGP:** `wait_for $BGP_TIMEOUT r3 "vtysh -c 'show bgp neighbors 192.0.2.2 json' | grep -o '\"bgpState\":\"[A-Za-z]*\"'" "Established"` and the same on r4 for 192.0.2.1. Then `expect_contains r3 "vtysh -c 'show ip route bgp'" "10.2.0.0/16"` and `expect_contains r4 "vtysh -c 'show ip route bgp'" "10.1.0.0/16"`.
-4. **Default route on interiors:** `expect_contains <r> "vtysh -c 'show ip route ospf'" "0.0.0.0/0"` for r1, r2, r5, r6.
+4. **Default route on interiors:** `expect_contains <r> "vtysh -c 'show ip route ospf'" "O>* 0.0.0.0/0"` for r1, r2, r5, r6. The `>*` (selected, installed) is required: an unselected `O   0.0.0.0/0` appears when the kernel management default (`K>*`, distance 0) was not removed.
 5. **End-to-end and path:** `expect_contains h1 "ping -c 5 -W 2 10.2.100.10" "5 received"`; `expect_contains h2 "ping -c 5 -W 2 10.1.100.10" "5 received"`; `expect_contains h1 "traceroute -n -w 1 -q 1 -m 8 10.2.100.10" "10.1.13.2"` (primary path via r3's `eth1`) and `expect_not_contains ... "10.1.12.2"`.
 6. **Failover:** install `trap 'node_exec r1 "ip link set eth2 up" >/dev/null 2>&1 || true' EXIT`; `node_exec r1 "ip link set eth2 down"`; `wait_for $OSPF_TIMEOUT r1 "vtysh -c 'show ip route 10.1.0.3/32'" "via 10.1.12.2"`; `expect_contains h1 "ping -c 5 -W 2 10.2.100.10" "5 received"`; `expect_contains h1 "traceroute -n -w 1 -q 1 -m 8 10.2.100.10" "10.1.12.2"` and `expect_not_contains ... "10.1.13.2"`.
 7. **Restore:** `node_exec r1 "ip link set eth2 up"`; `wait_for $OSPF_TIMEOUT r1 "vtysh -c 'show ip route 10.1.0.3/32'" "via 10.1.13.2"`; `expect_contains h1 "ping -c 5 -W 2 10.2.100.10" "5 received"`; `trap - EXIT`.

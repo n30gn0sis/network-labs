@@ -85,6 +85,14 @@ the final checks. Prefer kernel-level injection (`ip link set`) over
 daemon-level `shutdown` commands: it models a real link loss and needs no
 NOS-specific syntax.
 
+### Management default route
+
+Containerlab gives every node a default route via the management network. A
+scenario whose routers must learn a default from a routing protocol deletes it
+with `exec: [ip route del default]`, since the kernel route (distance 0)
+outranks any protocol default. Hosts that should route via a lab router use
+`ip route replace default via <router>` instead.
+
 ## Development tools
 
 Runtime: `bash`, `docker`, `containerlab`, `git`, and `yq` **v4 from
