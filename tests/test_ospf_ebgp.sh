@@ -71,4 +71,75 @@ test_verify_placeholder_is_executable_and_sources_lib() {
   assert_contains "$(cat "$SCN/verify.sh")" 'source "${LIB_SH:?'
 }
 
+cfg() { cat "$SCN/configs/$1/frr.conf"; }
+daemons_of() { cat "$SCN/configs/$1/daemons"; }
+
+# Every router: hostname, loopback in area 0, router-id, daemons sane.
+assert_router_base() { # R ROUTERID
+  local c; c="$(cfg "$1")"
+  assert_contains "$c" "hostname $1"
+  assert_contains "$c" "interface lo"
+  assert_contains "$c" " ip address $2/32"
+  assert_contains "$c" "router ospf"
+  assert_contains "$c" " ospf router-id $2"
+  local d; d="$(daemons_of "$1")"
+  assert_contains "$d" "zebra=yes"
+  assert_contains "$d" "ospfd=yes"
+  assert_contains "$d" "staticd=yes"
+  assert_contains "$d" "vtysh_enable=yes"
+  assert_file_exists "$SCN/configs/$1/daemons"
+}
+# Every address the LINKS table assigns to R appears as an `ip address` line.
+assert_addresses_from_table() { # R
+  local c a aaddr b baddr; c="$(cfg "$1")"
+  while read -r a aaddr b baddr; do
+    [[ -z "$a" ]] && continue
+    [[ "${a%%:*}" == "$1" ]] && assert_contains "$c" " ip address $aaddr" "$1 ${a#*:}"
+    [[ "${b%%:*}" == "$1" ]] && assert_contains "$c" " ip address $baddr" "$1 ${b#*:}"
+  done <<<"$LINKS"
+}
+# Each listed interface block has area 0, point-to-point and cost 10.
+assert_ospf_ptp() { # R IFACE...
+  local r="$1"; shift
+  local i block
+  for i in "$@"; do
+    block="$(sed -n "/^interface $i\$/,/^!/p" "$SCN/configs/$r/frr.conf")"
+    assert_contains "$block" " ip ospf area 0" "$r $i area"
+    assert_contains "$block" " ip ospf network point-to-point" "$r $i ptp"
+    assert_contains "$block" " ip ospf cost 10" "$r $i cost"
+  done
+}
+
+test_as65001_configs_exist() {
+  local r; for r in r1 r2 r3; do assert_file_exists "$SCN/configs/$r/frr.conf"; done
+}
+test_as65001_base_and_addresses() {
+  assert_router_base r1 10.1.0.1; assert_addresses_from_table r1
+  assert_router_base r2 10.1.0.2; assert_addresses_from_table r2
+  assert_router_base r3 10.1.0.3; assert_addresses_from_table r3
+}
+test_as65001_ospf_interfaces() {
+  assert_ospf_ptp r1 eth2 eth3
+  assert_ospf_ptp r2 eth1 eth2
+  assert_ospf_ptp r3 eth1 eth2
+  assert_contains "$(cfg r1)" " passive-interface eth1"
+  assert_not_contains "$(sed -n '/^interface eth3$/,/^!/p' "$SCN/configs/r3/frr.conf")" "ip ospf" "eBGP link not in OSPF"
+}
+test_as65001_border_only_on_r3() {
+  local c3; c3="$(cfg r3)"
+  assert_contains "$c3" "router bgp 65001"
+  assert_contains "$c3" " no bgp ebgp-requires-policy"
+  assert_contains "$c3" " neighbor 192.0.2.2 remote-as 65002"
+  assert_contains "$c3" "  network 10.1.0.0/16"
+  assert_contains "$c3" "ip route 10.1.0.0/16 Null0"
+  assert_contains "$c3" " default-information originate always"
+  assert_contains "$(daemons_of r3)" "bgpd=yes"
+  local r
+  for r in r1 r2; do
+    assert_not_contains "$(cfg "$r")" "router bgp"
+    assert_not_contains "$(cfg "$r")" "default-information"
+    assert_contains "$(daemons_of "$r")" "bgpd=no"
+  done
+}
+
 run_tests
