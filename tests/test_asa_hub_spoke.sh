@@ -84,6 +84,7 @@ tunnel_block() { sed -n "/^interface $2\$/,/^interface \|^route \|^!/p" "$1"; }
 assert_common_base() { # file hostname inside_ip outside_ip
   local c; c="$(cat "$1")"
   assert_contains "$c" "hostname $2"
+  assert_contains "$c" "aaa authorization exec LOCAL auto-enable"
   assert_contains "$c" "interface GigabitEthernet0/0"
   assert_contains "$c" " nameif outside"
   assert_contains "$c" " security-level 0"
@@ -218,6 +219,146 @@ test_cryptomap_ikev2_configs() {
   assert_contains "$hub" "crypto map OUTSIDE_MAP 10 set ikev2 ipsec-proposal GCM"
   assert_contains "$hub" "ikev2 remote-authentication pre-shared-key LAB-PSK-SPOKE1"
   assert_not_contains "$hub" "ikev1"
+}
+
+test_cryptomap_ikev1_patch_only_repoints_startup_configs() {
+  local p; p="$SCN/variants/cryptomap-ikev1/topology.patch.yml"
+  assert_file_exists "$p"
+  assert_eq "startup-config" "$(yq -r '[.topology.nodes[] | keys[]] | unique | join(" ")' "$p")"
+  assert_eq "variants/cryptomap-ikev1/configs/asa-spoke2/startup.cfg" "$(yq -r '.topology.nodes["asa-spoke2"]["startup-config"]' "$p")"
+}
+test_cryptomap_ikev1_configs() {
+  assert_cryptomap_structure cryptomap-ikev1 ikev1
+  local hub s1; hub="$(cat "$(cfg_of cryptomap-ikev1 asa-hub)")"; s1="$(cat "$(cfg_of cryptomap-ikev1 asa-spoke1)")"
+  assert_contains "$hub" "crypto ikev1 policy 10"
+  assert_contains "$hub" " authentication pre-share"
+  assert_contains "$hub" " encryption aes-256"
+  assert_contains "$hub" " hash sha"
+  assert_contains "$hub" " group 14"
+  assert_contains "$hub" "crypto ipsec ikev1 transform-set AES256-SHA esp-aes-256 esp-sha-hmac"
+  assert_contains "$hub" "crypto map OUTSIDE_MAP 10 set ikev1 transform-set AES256-SHA"
+  assert_contains "$hub" "crypto map OUTSIDE_MAP 20 set ikev1 transform-set AES256-SHA"
+  assert_contains "$hub" " ikev1 pre-shared-key LAB-PSK-SPOKE1"
+  assert_contains "$s1" " ikev1 pre-shared-key LAB-PSK-SPOKE1"
+  assert_not_contains "$hub" "ikev2"
+  assert_not_contains "$s1" "ikev2"
+}
+test_cryptomap_variants_differ_only_in_ike_version() {
+  # Strip IKE-specific lines; what remains must be identical between the two crypto-map variants.
+  local n a b
+  for n in asa-hub asa-spoke1 asa-spoke2; do
+    a="$(grep -vE 'ikev[12]|transform-set|ipsec-proposal|GCM|integrity|prf |encryption|hash sha|group 1[49]|lifetime|authentication pre-share|^!' "$(cfg_of cryptomap-ikev2 "$n")")"
+    b="$(grep -vE 'ikev[12]|transform-set|ipsec-proposal|GCM|integrity|prf |encryption|hash sha|group 1[49]|lifetime|authentication pre-share|^!' "$(cfg_of cryptomap-ikev1 "$n")")"
+    assert_eq "$a" "$b" "$n non-IKE lines"
+  done
+}
+
+# Stubs that model a healthy lab: hosts answer pings, ASAs answer show commands.
+# IKE=ikev1|ikev2 selects which `show crypto ... sa` returns peers; BROKEN=1 makes spoke2 unreachable.
+make_lab_stubs() {
+  local root="$1" ike="$2" broken="${3:-0}" encaps="${4:-17}"
+  mkdir -p "$root/bin"
+  cat >"$root/bin/docker" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"$root/docker.log"
+case "\$*" in
+  inspect*asa-hub) echo "172.20.20.11" ;;
+  inspect*asa-spoke1) echo "172.20.20.12" ;;
+  inspect*asa-spoke2) echo "172.20.20.13" ;;
+  *"ping"*"10.3.0.10"*) if [[ "$broken" == 1 ]]; then echo "5 packets transmitted, 0 received, 100% packet loss"; else echo "5 packets transmitted, 5 received, 0% packet loss"; fi ;;
+  *"ping -c 2"*) echo "2 packets transmitted, 2 received, 0% packet loss" ;;
+  *"ping -c 3"*) echo "3 packets transmitted, 3 received, 0% packet loss" ;;
+  *"ping -c 5"*) echo "5 packets transmitted, 5 received, 0% packet loss" ;;
+  *) echo "unknown" ;;
+esac
+STUB
+  cat >"$root/bin/sshpass" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"$root/ssh.log"
+case "\$*" in
+  *"show version"*) echo "Cisco Adaptive Security Appliance Software Version 9.18(4)" ;;
+  *"show crypto $ike sa"*) echo "Peer 203.0.113.2 READY"; echo "Peer 203.0.113.3 READY" ;;
+  *"show crypto ikev"*) echo "There are no IKE SAs" ;;
+  *"pkts encaps"*) if [[ "$encaps" != none ]]; then echo "      #pkts encaps: $encaps, #pkts encrypt: $encaps"; fi ;;
+  *"show interface Tunnel"*) echo "Interface Tunnel1 \"vti-spoke1\", is up, line protocol is up" ;;
+  *) echo "unknown" ;;
+esac
+STUB
+  printf '#!/usr/bin/env bash\necho "ssh must be invoked via sshpass stub" >&2; exit 99\n' >"$root/bin/ssh"
+  chmod +x "$root/bin/docker" "$root/bin/sshpass" "$root/bin/ssh"
+}
+run_verify() { # root variant
+  LIB_REPO_ROOT="$REPO_ROOT" DOCKER="$1/bin/docker" SSHPASS_BIN="$1/bin/sshpass" SSH="$1/bin/ssh" \
+    WAIT_INTERVAL=1 ASA_BOOT_TIMEOUT=2 ASA_SA_TIMEOUT=2 \
+    "$REPO_ROOT/scripts/verify.sh" asa-hub-spoke-ipsec --variant "$2"
+}
+test_verify_passes_for_vti_against_healthy_stubs() {
+  local root out; root="$(make_tmpdir)"; make_lab_stubs "$root" ikev2
+  out="$(run_verify "$root" vti-ikev2 2>&1)"
+  assert_contains "$out" "all checks passed"
+  local ssh; ssh="$(cat "$root/ssh.log")"
+  assert_contains "$ssh" "admin@172.20.20.11 show crypto ikev2 sa"
+  assert_contains "$ssh" "show crypto ipsec sa peer 203.0.113.2 | include pkts encaps"
+  assert_contains "$ssh" "show crypto ipsec sa peer 203.0.113.3 | include pkts encaps"
+  assert_contains "$ssh" "show interface Tunnel1 | include line protocol"
+  assert_contains "$ssh" "show interface Tunnel2 | include line protocol"
+  local dk; dk="$(cat "$root/docker.log")"
+  assert_contains "$dk" "exec clab-asa-hub-spoke-ipsec-h2 sh -c ping -c 5 -W 2 10.3.0.10"
+  assert_contains "$dk" "exec clab-asa-hub-spoke-ipsec-h3 sh -c ping -c 3 -W 2 10.2.0.10"
+  assert_not_contains "$dk" "exec clab-asa-hub-spoke-ipsec-asa-hub"
+}
+test_verify_uses_ikev1_show_for_ikev1_variant() {
+  local root out; root="$(make_tmpdir)"; make_lab_stubs "$root" ikev1
+  out="$(run_verify "$root" cryptomap-ikev1 2>&1)"
+  assert_contains "$out" "all checks passed"
+  assert_contains "$(cat "$root/ssh.log")" "show crypto ikev1 sa"
+  assert_not_contains "$(cat "$root/ssh.log")" "show interface Tunnel"
+}
+test_verify_cryptomap_ikev2_skips_tunnel_interface_checks() {
+  local root out; root="$(make_tmpdir)"; make_lab_stubs "$root" ikev2
+  out="$(run_verify "$root" cryptomap-ikev2 2>&1)"
+  assert_contains "$out" "all checks passed"
+  assert_not_contains "$(cat "$root/ssh.log")" "show interface Tunnel"
+}
+test_verify_fails_when_spoke_to_spoke_ping_fails() {
+  local root out rc=0; root="$(make_tmpdir)"; make_lab_stubs "$root" ikev2 1
+  out="$(run_verify "$root" vti-ikev2 2>&1)" || rc=$?
+  assert_eq 1 "$rc"
+  assert_contains "$out" "error: h2: 'ping -c 5 -W 2 10.3.0.10'"
+}
+test_verify_fails_when_ike_sa_missing() {
+  local root out rc=0; root="$(make_tmpdir)"; make_lab_stubs "$root" ikev1   # stub answers ikev1 only
+  out="$(run_verify "$root" vti-ikev2 2>&1)" || rc=$?                     # variant asks for ikev2
+  assert_eq 1 "$rc"
+  assert_contains "$out" "show crypto ikev2 sa' did not contain '203.0.113.2'"
+}
+
+test_verify_fails_when_no_traffic_encrypted() {
+  local root out rc=0; root="$(make_tmpdir)"; make_lab_stubs "$root" ikev2 0 0
+  out="$(run_verify "$root" vti-ikev2 2>&1)" || rc=$?
+  assert_eq 1 "$rc"
+  assert_contains "$out" "unexpectedly contained '#pkts encaps: 0,'"
+}
+test_verify_fails_when_ipsec_sa_output_empty() {
+  local root out rc=0; root="$(make_tmpdir)"; make_lab_stubs "$root" ikev2 0 none
+  out="$(run_verify "$root" vti-ikev2 2>&1)" || rc=$?
+  assert_eq 1 "$rc"
+  assert_contains "$out" "did not contain '#pkts encaps: '"
+}
+
+test_readme_documents_scenario() {
+  local r; r="$(cat "$SCN/README.md")"
+  assert_contains "$r" "## Objective"
+  assert_contains "$r" "## Topology"
+  assert_contains "$r" "## Variants"
+  assert_contains "$r" "## Verification"
+  assert_contains "$r" "## Validation on a containerlab host"
+  assert_contains "$r" "GigabitEthernet1/1"
+  assert_contains "$r" "BVI"
+  assert_contains "$r" "LAB-PSK"
+  assert_contains "$r" "hairpin"
+  assert_contains "$r" "vrnetlab"
+  assert_contains "$r" "scripts/up.sh asa-hub-spoke-ipsec --force"
 }
 
 run_tests

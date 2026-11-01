@@ -25,7 +25,7 @@ to `scripts/lib.sh`.
 | Variants | Three variants of one scenario: `vti-ikev2` (default), `cryptomap-ikev2`, `cryptomap-ikev1`. Variants swap ASA configs only; images and hosts are identical. |
 | Images | ASAv 9.8+ supplied by the user, built with vrnetlab as `vrnetlab/cisco_asav:<tag>`. No free-image fallback; the scenario is ASA-only and documented as such. |
 | Hosts and checks | One Linux host per site. Verify: ASAs reachable, IKE SAs up on the hub for both spokes, non-zero IPsec encaps/decaps, spoke→hub pings, spoke→spoke ping via the hub, VTI interfaces up/up (VTI variant). |
-| ASA access | `asa_exec` over SSH to the containerlab management address using `ssh` + `sshpass` (vrnetlab default `admin` / `Admin@123`, overridable). `expect_contains` / `wait_for` route nodes listed in `ASA_NODES` through it. |
+| ASA access | `asa_exec` over SSH to the containerlab management address using `ssh` + `sshpass` (vrnetlab default `admin` / `CiscoAsa1!`, overridable). `expect_contains` / `wait_for` route nodes listed in `ASA_NODES` through it. |
 | Default-variant layout | The default variant's ASA configs live in `configs/` so `topology.clab.yml` is self-contained; only the two crypto-map variants live under `variants/`. |
 
 ## Approaches considered
@@ -47,7 +47,7 @@ to `scripts/lib.sh`.
       asa-hub (.1)                  asa-spoke1 (.1)               asa-spoke2 (.1)
           | outside 203.0.113.1          | outside 203.0.113.2         | outside 203.0.113.3
           +------------------------------+-----------------------------+
-                               wan  203.0.113.0/24  (one clab bridge)
+                               wan  203.0.113.0/24  (Linux container acting as a bridge)
 ```
 
 | Node | Kind | Image | Role |
@@ -55,7 +55,7 @@ to `scripts/lib.sh`.
 | `asa-hub` | `cisco_asav` | `vrnetlab/cisco_asav:<tag>` | hub, outside 203.0.113.1, inside 10.1.0.1 |
 | `asa-spoke1` | `cisco_asav` | same | spoke, outside 203.0.113.2, inside 10.2.0.1 |
 | `asa-spoke2` | `cisco_asav` | same | spoke, outside 203.0.113.3, inside 10.3.0.1 |
-| `h1`, `h2`, `h3` | `linux` | `wbitt/network-multitool` | 10.x.0.10/24, default route to their ASA, set via `exec:` |
+| `h1`, `h2`, `h3` | `linux` | `wbitt/network-multitool` | 10.x.0.10/24, route to 10.0.0.0/8 via their ASA, set via `exec:` |
 | `wan` | `linux` | `wbitt/network-multitool` | Linux container bridging its three ports (br0); flat stand-in for the internet. A containerlab `bridge` kind would need a pre-created host bridge. |
 
 Links: each ASA `GigabitEthernet0/0` → `wan`; each ASA `GigabitEthernet0/1` →
@@ -89,10 +89,9 @@ directly connected segment with no gateway, so every peer is reachable without
 one; routes to remote inside networks are per variant, below); ICMP
 inspection (`policy-map global_policy` → `inspect icmp`); identity NAT exemption
 `nat (inside,outside) source static <local> <local> destination static <remote>
-<remote> no-proxy-arp route-lookup` for all site-to-site pairs; `ssh 0.0.0.0
-0.0.0.0 management` and `aaa authentication ssh console LOCAL` so `asa_exec`
-works (vrnetlab's bootstrap already creates the `admin` user; the startup config
-must not remove it); `tunnel-group <peer-ip> type ipsec-l2l` with a pre-shared
+<remote> no-proxy-arp route-lookup` for all site-to-site pairs; `aaa authorization exec LOCAL auto-enable` so SSH sessions land in privileged
+mode (vrnetlab's bootstrap already creates the `admin` user and configures SSH
+access; the startup config must not remove or change them); `tunnel-group <peer-ip> type ipsec-l2l` with a pre-shared
 key per peer.
 
 Pre-shared keys are lab placeholders (`LAB-PSK-SPOKE1`, `LAB-PSK-SPOKE2`) and
@@ -161,7 +160,7 @@ minimum ASA version (9.8 for `vti-ikev2`; any 9.x for the others).
 ### Library additions (`scripts/lib.sh`)
 
 - `node_mgmt_ip NODE`: `"$DOCKER" inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' clab-<lab>-NODE`; fails if empty.
-- `asa_exec NODE CMD`: `"$SSHPASS" -p "$ASA_PASS" "$SSH" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -o LogLevel=ERROR "$ASA_USER@$(node_mgmt_ip NODE)" "CMD"`. Defaults: `ASA_USER=admin`, `ASA_PASS=Admin@123`, `SSH=ssh`, `SSHPASS=sshpass`. Fails via `fail` with an install hint when `sshpass` or `ssh` is missing.
+- `asa_exec NODE CMD`: `timeout "$ASA_SSH_TIMEOUT" "$SSHPASS_BIN" -p "$ASA_PASS" "$SSH" -n -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -o LogLevel=ERROR "$ASA_USER@$(node_mgmt_ip NODE)" "CMD"`. Defaults: `ASA_USER=admin`, `ASA_PASS=CiscoAsa1!`, `SSH=ssh`, `SSHPASS_BIN=sshpass`, `ASA_SSH_TIMEOUT=30`. Returns 1 when the management IP cannot be determined. Fails via `fail` with an install hint when `sshpass` or `ssh` is missing.
 - `_run_on_node NODE CMD`: dispatches to `asa_exec` when NODE is a word in `$ASA_NODES`, else `node_exec`. `expect_contains` and `wait_for` call `_run_on_node` instead of `node_exec`; their interface does not change.
 - `expect_not_contains NODE CMD UNEXPECTED`: fails if the output contains UNEXPECTED. Mirrors `expect_contains`.
 
@@ -171,10 +170,10 @@ minimum ASA version (9.8 for `vti-ikev2`; any 9.x for the others).
 
 1. `export ASA_NODES="asa-hub asa-spoke1 asa-spoke2"`; pick `IKE=ikev1` when
    `$VARIANT` is `cryptomap-ikev1`, else `ikev2`.
-2. ASAs booted: `wait_for 300 <asa> "show version | include Software" "Cisco Adaptive Security Appliance"` for all three (ASAv boots in 2–4 minutes).
+2. ASAs booted: `wait_for 600 <asa> "show version | include Software" "Cisco Adaptive Security Appliance"` for all three (ASAv takes 5–7 minutes to boot; `ASA_BOOT_TIMEOUT` default 600, `ASA_SA_TIMEOUT` default 120).
 3. Hosts reach their own ASA: `expect_contains h1 "ping -c 2 -W 2 10.1.0.1" "2 received"` (h2, h3 likewise).
-4. Trigger and wait for tunnels: `node_exec h2 "ping -c 3 -W 2 10.1.0.10" || true`, same from h3; then `wait_for 120 asa-hub "show crypto $IKE sa" "203.0.113.2"` and `"203.0.113.3"`.
-5. Encrypted traffic: `expect_contains h2 "ping -c 5 -W 2 10.1.0.10" "5 received"`; `expect_not_contains asa-hub "show crypto ipsec sa peer 203.0.113.2 | include pkts encaps" "#pkts encaps: 0"`; same for h3 / 203.0.113.3.
+4. Trigger and wait for tunnels: `node_exec h2 "ping -c 3 -W 2 10.1.0.10" || true`, same from h3, then warm up spoke-to-spoke SAs with `node_exec h2 "ping -c 3 -W 2 10.3.0.10" || true` and `node_exec h3 "ping -c 3 -W 2 10.2.0.10" || true`; then `wait_for 120 asa-hub "show crypto $IKE sa" "203.0.113.2"` and `"203.0.113.3"`.
+5. Encrypted traffic: `expect_contains h2 "ping -c 5 -W 2 10.1.0.10" "5 received"`; `expect_contains asa-hub "show crypto ipsec sa peer 203.0.113.2 | include pkts encaps" "#pkts encaps: "` (presence check) plus `expect_not_contains ... "#pkts encaps: 0,"` (absence check); same for h3 / 203.0.113.3.
 6. Spoke-to-spoke through the hub: `expect_contains h2 "ping -c 5 -W 2 10.3.0.10" "5 received"`.
 7. VTI variant only: `expect_contains asa-hub "show interface Tunnel1 | include line protocol" "up"`, same for `Tunnel2`.
 8. `log "all checks passed"`.
@@ -184,7 +183,7 @@ minimum ASA version (9.8 for `vti-ikev2`; any 9.x for the others).
 - `scenario.yml` validates; `name` equals the directory; status is `draft`
   until a real run passes.
 - For each variant, `build_topology` output has exactly three `cisco_asav`
-  nodes and three `linux` nodes, one `linux` node named `wan`, six links, and every
+  nodes and four `linux` nodes (h1–h3 and `wan`), six links, and every
   `startup-config` path exists relative to the built file.
 - Each variant's hub config contains its marker: `interface Tunnel1` and
   `tunnel protection ipsec profile` for `vti-ikev2`; `crypto map OUTSIDE_MAP
@@ -200,7 +199,7 @@ minimum ASA version (9.8 for `vti-ikev2`; any 9.x for the others).
   list (stubbed binaries recording argv); `expect_contains` routes an
   `ASA_NODES` member through `asa_exec` and others through `node_exec`;
   `expect_not_contains` passes and fails correctly; `asa_exec` fails with the
-  install hint when `SSHPASS` points at a missing binary.
+  install hint when `SSHPASS_BIN` points at a missing binary.
 
 ### Real-world validation (outside this repository's CI)
 
@@ -226,7 +225,7 @@ containerlab version used in the scenario README.
 - `images/README.md`: ASAv row (vendor image, vrnetlab recipe, tag convention).
 - `docs/conventions.md`: `ASA_NODES` / `asa_exec` convention; `sshpass` and
   `ssh` listed as optional runtime dependencies for scenarios that set
-  `ASA_NODES`; `ASA_USER` / `ASA_PASS` / `SSH` / `SSHPASS` overrides.
+  `ASA_NODES`; `ASA_USER` / `ASA_PASS` / `SSH` / `SSHPASS_BIN` overrides.
 - `docs/simulators/gns3.md` and `eve-ng.md`: `cisco_asav` row in the kind
   mapping tables (GNS3 ASAv QEMU appliance; EVE-NG `asav` template).
 - Exports remain `none` for all three simulators in `scenario.yml`.

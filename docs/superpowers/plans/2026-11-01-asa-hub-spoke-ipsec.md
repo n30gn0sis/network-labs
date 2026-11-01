@@ -14,14 +14,14 @@ Spec: `docs/superpowers/specs/2026-11-01-asa-hub-spoke-ipsec-design.md`
 
 - Every script: `#!/usr/bin/env bash`, `set -euo pipefail`; `lib.sh` is sourced, never executed, and already sets `shopt -s inherit_errexit`.
 - `yq` is mikefarah yq v4. Dev tooling lives in `~/.local/bin`; start every Bash call with `export PATH="$HOME/.local/bin:$PATH"`.
-- Tests never need Docker, containerlab, ssh or sshpass: inject stubs via `DOCKER`, `SSH`, `SSHPASS`, `CLAB`.
+- Tests never need Docker, containerlab, ssh or sshpass: inject stubs via `DOCKER`, `SSH`, `SSHPASS_BIN`, `CLAB`.
 - Scenario name `asa-hub-spoke-ipsec`, topic `security/ipsec`, `status: draft` (stays draft until a real containerlab run; see spec "Real-world validation").
 - Node names: `asa-hub`, `asa-spoke1`, `asa-spoke2`, `h1`, `h2`, `h3`, `wan`. ASA kind `cisco_asav`, image `vrnetlab/cisco_asav:9.18.4` (tag is a placeholder the user retags to match their build; recorded in `scenario.yml` `images:` and `notes:`). Hosts and `wan`: kind `linux`, image `wbitt/network-multitool:latest`.
 - Addressing: WAN `203.0.113.0/24` (hub .1, spoke1 .2, spoke2 .3); inside `10.1.0.0/24` (hub), `10.2.0.0/24` (spoke1), `10.3.0.0/24` (spoke2); ASA inside `.1`, host `.10`; VTI `169.254.1.0/30` (hub .1, spoke1 .2), `169.254.2.0/30` (hub .1, spoke2 .2).
 - ASAv interface mapping in containerlab: `eth1` = `GigabitEthernet0/0` (outside), `eth2` = `GigabitEthernet0/1` (inside). Links use `ethN` names.
 - Crypto: IKEv2 `aes-gcm-256`, `prf sha384`, `group 19`, lifetime 86400; IPsec proposal `GCM` = `esp aes-gcm-256` / integrity null. IKEv1 `aes-256` / `sha` / `group 14` / pre-share / 86400; transform-set `AES256-SHA esp-aes-256 esp-sha-hmac`.
 - Pre-shared keys: `LAB-PSK-SPOKE1` (hub↔spoke1), `LAB-PSK-SPOKE2` (hub↔spoke2).
-- ASA access defaults: `ASA_USER=admin`, `ASA_PASS=Admin@123`, `SSH=ssh`, `SSHPASS=sshpass`, all overridable from the environment.
+- ASA access defaults: `ASA_USER=admin`, `ASA_PASS=CiscoAsa1!`, `SSH=ssh`, `SSHPASS_BIN=sshpass`, `ASA_SSH_TIMEOUT=30`, all overridable from the environment.
 - `ASA_NODES` is a space-separated list of node names exported by a scenario's `verify.sh`; `_run_on_node` uses it to route commands.
 - Variant names: `vti-ikev2` (default, configs in `configs/`), `cryptomap-ikev2`, `cryptomap-ikev1` (under `variants/`). Startup configs are named `startup.cfg` under `<...>/configs/<node>/`.
 - Startup configs are ASA configuration-mode command lists applied by vrnetlab after its bootstrap (hostname, management interface, `admin` user, SSH on management). They must not touch `Management0/0`, the `admin` user, or SSH-on-management.
@@ -173,7 +173,7 @@ git commit -m "feat: add expect_not_contains and route node checks through _run_
 
 **Interfaces:**
 - Consumes: `node_exec`, `fail`, `log`, `_run_on_node`, `LAB_NAME`, `DOCKER`.
-- Produces: `node_mgmt_ip NODE` (echoes the container's management IPv4; fails if empty), `asa_exec NODE CMD` (runs `"$SSHPASS" -p "$ASA_PASS" "$SSH" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -o LogLevel=ERROR "$ASA_USER@<ip>" "CMD"`). Env: `ASA_USER` (default `admin`), `ASA_PASS` (default `Admin@123`), `SSH` (default `ssh`), `SSHPASS` (default `sshpass`).
+- Produces: `node_mgmt_ip NODE` (echoes the container's management IPv4; fails if empty), `asa_exec NODE CMD` (runs `"$SSHPASS_BIN" -p "$ASA_PASS" "$SSH" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -o LogLevel=ERROR "$ASA_USER@<ip>" "CMD"`). Env: `ASA_USER` (default `admin`), `ASA_PASS` (default `CiscoAsa1!`), `SSH` (default `ssh`), `SSHPASS_BIN` (default `sshpass`).
 
 - [ ] **Step 1: Write failing tests** (append above `run_tests`)
 
@@ -217,27 +217,27 @@ test_node_mgmt_ip_fails_when_empty() {
 }
 test_asa_exec_builds_sshpass_command() {
   local root out; root="$(make_tmpdir)"; make_asa_stubs "$root"
-  out="$(DOCKER="$root/bin/docker" SSHPASS="$root/bin/sshpass" SSH="$root/bin/ssh" LAB_NAME=demo asa_exec asa-hub "show version")"
+  out="$(DOCKER="$root/bin/docker" SSHPASS_BIN="$root/bin/sshpass" SSH="$root/bin/ssh" LAB_NAME=demo asa_exec asa-hub "show version")"
   assert_contains "$out" "Cisco Adaptive Security Appliance"
   local logged; logged="$(cat "$root/ssh.log")"
-  assert_contains "$logged" "-p Admin@123 $root/bin/ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -o LogLevel=ERROR admin@172.20.20.11 show version"
+  assert_contains "$logged" "-p CiscoAsa1! $root/bin/ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -o LogLevel=ERROR admin@172.20.20.11 show version"
 }
 test_asa_exec_honours_user_and_pass_overrides() {
   local root; root="$(make_tmpdir)"; make_asa_stubs "$root"
-  DOCKER="$root/bin/docker" SSHPASS="$root/bin/sshpass" SSH="$root/bin/ssh" LAB_NAME=demo ASA_USER=ops ASA_PASS=s3cret asa_exec asa-hub "show version" >/dev/null
+  DOCKER="$root/bin/docker" SSHPASS_BIN="$root/bin/sshpass" SSH="$root/bin/ssh" LAB_NAME=demo ASA_USER=ops ASA_PASS=s3cret asa_exec asa-hub "show version" >/dev/null
   assert_contains "$(cat "$root/ssh.log")" "-p s3cret $root/bin/ssh"
   assert_contains "$(cat "$root/ssh.log")" "ops@172.20.20.11"
 }
 test_asa_exec_fails_with_hint_when_sshpass_missing() {
   local root out rc=0; root="$(make_tmpdir)"; make_asa_stubs "$root"
-  out="$(DOCKER="$root/bin/docker" SSHPASS="$root/bin/nonexistent" SSH="$root/bin/ssh" LAB_NAME=demo bash -c 'source "'"$REPO_ROOT"'/scripts/lib.sh"; asa_exec asa-hub "show version"' 2>&1)" || rc=$?
+  out="$(DOCKER="$root/bin/docker" SSHPASS_BIN="$root/bin/nonexistent" SSH="$root/bin/ssh" LAB_NAME=demo bash -c 'source "'"$REPO_ROOT"'/scripts/lib.sh"; asa_exec asa-hub "show version"' 2>&1)" || rc=$?
   assert_eq 1 "$rc"
   assert_contains "$out" "sshpass"
   assert_contains "$out" "install"
 }
 test_run_on_node_routes_asa_nodes_over_ssh() {
   local root out; root="$(make_tmpdir)"; make_asa_stubs "$root"
-  export DOCKER="$root/bin/docker" SSHPASS="$root/bin/sshpass" SSH="$root/bin/ssh" LAB_NAME=demo ASA_NODES="asa-hub asa-spoke1"
+  export DOCKER="$root/bin/docker" SSHPASS_BIN="$root/bin/sshpass" SSH="$root/bin/ssh" LAB_NAME=demo ASA_NODES="asa-hub asa-spoke1"
   out="$(_run_on_node asa-hub "show version")"
   assert_contains "$out" "Cisco Adaptive Security Appliance"
   assert_contains "$(cat "$root/ssh.log")" "admin@172.20.20.11 show version"
@@ -248,9 +248,9 @@ test_run_on_node_routes_asa_nodes_over_ssh() {
 }
 test_expect_contains_uses_asa_route() {
   local root; root="$(make_tmpdir)"; make_asa_stubs "$root"
-  DOCKER="$root/bin/docker" SSHPASS="$root/bin/sshpass" SSH="$root/bin/ssh" LAB_NAME=demo ASA_NODES="asa-hub" \
+  DOCKER="$root/bin/docker" SSHPASS_BIN="$root/bin/sshpass" SSH="$root/bin/ssh" LAB_NAME=demo ASA_NODES="asa-hub" \
     assert_succeeds expect_contains asa-hub "show crypto ikev2 sa" "203.0.113.3"
-  DOCKER="$root/bin/docker" SSHPASS="$root/bin/sshpass" SSH="$root/bin/ssh" LAB_NAME=demo ASA_NODES="asa-hub" \
+  DOCKER="$root/bin/docker" SSHPASS_BIN="$root/bin/sshpass" SSH="$root/bin/ssh" LAB_NAME=demo ASA_NODES="asa-hub" \
     assert_succeeds expect_not_contains asa-hub "show crypto ipsec sa peer 203.0.113.2 | include pkts encaps" "#pkts encaps: 0"
 }
 ```
@@ -275,15 +275,15 @@ node_mgmt_ip() {
 }
 
 # asa_exec NODE CMD -> runs CMD on an ASA over SSH to its management address.
-# Env: ASA_USER (admin), ASA_PASS (Admin@123), SSH (ssh), SSHPASS (sshpass).
+# Env: ASA_USER (admin), ASA_PASS (CiscoAsa1!), SSH (ssh), SSHPASS_BIN (sshpass).
 asa_exec() {
   local node="$1" cmd="$2" ip
-  local sshpass_bin="${SSHPASS:-sshpass}" ssh_bin="${SSH:-ssh}"
+  local sshpass_bin="${SSHPASS_BIN:-sshpass}" ssh_bin="${SSH:-ssh}"
   command -v "$sshpass_bin" >/dev/null 2>&1 \
     || fail "'$sshpass_bin' not found; ASA checks need sshpass (install: apt install sshpass / brew install hudochenkov/sshpass/sshpass)"
   command -v "$ssh_bin" >/dev/null 2>&1 || fail "'$ssh_bin' not found; ASA checks need an ssh client"
   ip="$(node_mgmt_ip "$node")"
-  "$sshpass_bin" -p "${ASA_PASS:-Admin@123}" "$ssh_bin" \
+  "$sshpass_bin" -p "${ASA_PASS:-CiscoAsa1!}" "$ssh_bin" \
     -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
     -o ConnectTimeout=5 -o LogLevel=ERROR \
     "${ASA_USER:-admin}@${ip}" "$cmd"
@@ -1214,7 +1214,7 @@ STUB
   chmod +x "$root/bin/docker" "$root/bin/sshpass" "$root/bin/ssh"
 }
 run_verify() { # root variant
-  LIB_REPO_ROOT="$REPO_ROOT" DOCKER="$1/bin/docker" SSHPASS="$1/bin/sshpass" SSH="$1/bin/ssh" WAIT_INTERVAL=1 \
+  LIB_REPO_ROOT="$REPO_ROOT" DOCKER="$1/bin/docker" SSHPASS_BIN="$1/bin/sshpass" SSH="$1/bin/ssh" WAIT_INTERVAL=1 \
     "$REPO_ROOT/scripts/verify.sh" asa-hub-spoke-ipsec --variant "$2"
 }
 test_verify_passes_for_vti_against_healthy_stubs() {
@@ -1262,7 +1262,7 @@ Note on timing: `wait_for 120 ...` in verify.sh with `WAIT_INTERVAL=1` makes the
 
 ```bash
 run_verify() { # root variant
-  LIB_REPO_ROOT="$REPO_ROOT" DOCKER="$1/bin/docker" SSHPASS="$1/bin/sshpass" SSH="$1/bin/ssh" \
+  LIB_REPO_ROOT="$REPO_ROOT" DOCKER="$1/bin/docker" SSHPASS_BIN="$1/bin/sshpass" SSH="$1/bin/ssh" \
     WAIT_INTERVAL=1 ASA_BOOT_TIMEOUT=2 ASA_SA_TIMEOUT=2 \
     "$REPO_ROOT/scripts/verify.sh" asa-hub-spoke-ipsec --variant "$2"
 }
@@ -1288,7 +1288,7 @@ source "${LIB_SH:?run this via scripts/verify.sh}"
 # ASA nodes are reached over SSH (asa_exec); hosts via docker exec.
 export ASA_NODES="asa-hub asa-spoke1 asa-spoke2"
 
-boot_timeout="${ASA_BOOT_TIMEOUT:-300}"   # ASAv takes 2-4 minutes to boot
+boot_timeout="${ASA_BOOT_TIMEOUT:-600}"   # ASAv takes 5-7 minutes to boot
 sa_timeout="${ASA_SA_TIMEOUT:-120}"
 ike=ikev2
 [[ "$VARIANT" == "cryptomap-ikev1" ]] && ike=ikev1
@@ -1474,7 +1474,7 @@ exactly what moving from IKEv1 to IKEv2 changes.
    `topology.clab.yml` and `scenario.yml` to match your build.
 2. Bring up a variant: `scripts/up.sh asa-hub-spoke-ipsec --force [--variant cryptomap-ikev2|cryptomap-ikev1]`
    (`--force` while the scenario is `draft`).
-3. Wait for the ASAs to boot (2–4 minutes), then run the verification.
+3. Wait for the ASAs to boot (5–7 minutes), then run the verification.
 
 ## Verification
 
@@ -1489,7 +1489,7 @@ exactly what moving from IKEv1 to IKEv2 changes.
 5. h2 pings h3 through the hub.
 6. VTI variant only: `Tunnel1` and `Tunnel2` on the hub are up/up.
 
-SSH defaults are vrnetlab's `admin` / `Admin@123`; override with `ASA_USER` and
+SSH defaults are vrnetlab's `admin` / `CiscoAsa1!`; override with `ASA_USER` and
 `ASA_PASS`. `sshpass` and an `ssh` client must be installed.
 
 ## Validation on a containerlab host
@@ -1534,7 +1534,7 @@ Under "## Vendor images (optional variants)", after the existing paragraph, add:
 |---|---|---|
 | Firewall (Cisco ASAv) | `vrnetlab/cisco_asav:<version>` (scenarios use `9.18.4`) | ASAv qcow2 from Cisco (licensed); build with vrnetlab `asav/` and `docker tag` to match |
 
-ASAv notes: vrnetlab bootstraps the `admin` user with password `Admin@123` and SSH on
+ASAv notes: vrnetlab bootstraps the `admin` user with password `CiscoAsa1!` and SSH on
 `Management0/0`; scenario startup configs are applied after that bootstrap and must not
 change it. The VTI scenario variants need ASA 9.8 or newer.
 ```
@@ -1550,7 +1550,7 @@ by default. A scenario whose nodes cannot be driven that way (QEMU-based network
 behind vrnetlab, such as ASAv) exports `ASA_NODES="<node> <node> ..."`; the verbs then
 reach those nodes over SSH to their containerlab management address via `asa_exec`.
 `asa_exec` uses `sshpass` and `ssh`, with `ASA_USER` (default `admin`), `ASA_PASS`
-(default `Admin@123`), `SSH` and `SSHPASS` overridable from the environment.
+(default `CiscoAsa1!`), `SSH` and `SSHPASS_BIN` overridable from the environment.
 ```
 
 In "## Development tools", change the runtime line to end with: "...mikefarah** (https://github.com/mikefarah/yq). Scenarios that set `ASA_NODES` additionally need `ssh` and `sshpass` at run time (not for the tests)."
@@ -1617,5 +1617,5 @@ Check the `ci / test` run on the new head. Expected: green.
 ## Self-review notes
 
 - Spec coverage: topology/addressing (T3), interface mapping + BVI note (T8 README), shared base config and NAT exemption (T4–T6 configs, `assert_common_base`), the three variants with the exact crypto parameters (T4, T5, T6), variant wiring via `startup-config` patches (T5, T6), `node_mgmt_ip` / `asa_exec` / `_run_on_node` / `expect_not_contains` (T1, T2), scenario `verify.sh` steps 1–8 (T7), scenario tests incl. markers, cross-ACL entries, PSK checks (T4–T7), lib tests (T1, T2), real-world validation commands and `draft` status (T3 scenario.yml, T8 README), docs changes (T8), exports `none` (T3). Spec deviation: `wan` is a `linux` container bridge, amended in the spec in T3.
-- Names used consistently: `ASA_NODES`, `asa_exec`, `node_mgmt_ip`, `_run_on_node`, `expect_not_contains`, `ASA_USER`, `ASA_PASS`, `SSH`, `SSHPASS`, `ASA_BOOT_TIMEOUT`, `ASA_SA_TIMEOUT`, `WAIT_INTERVAL`, `cfg_of`, `built`, `assert_common_base`, `assert_cryptomap_structure`, `make_asa_stubs`, `make_lab_stubs`, `run_verify`, node names, ACL names `L2L-SPOKE1`/`L2L-SPOKE2`/`L2L-HUB`, crypto map `OUTSIDE_MAP`, proposal `GCM`, profile `VTI-PROFILE`, transform set `AES256-SHA`, tunnel nameifs `vti-spoke1`/`vti-spoke2`/`vti-hub`.
+- Names used consistently: `ASA_NODES`, `asa_exec`, `node_mgmt_ip`, `_run_on_node`, `expect_not_contains`, `ASA_USER`, `ASA_PASS`, `SSH`, `SSHPASS_BIN`, `ASA_BOOT_TIMEOUT`, `ASA_SA_TIMEOUT`, `WAIT_INTERVAL`, `cfg_of`, `built`, `assert_common_base`, `assert_cryptomap_structure`, `make_asa_stubs`, `make_lab_stubs`, `run_verify`, node names, ACL names `L2L-SPOKE1`/`L2L-SPOKE2`/`L2L-HUB`, crypto map `OUTSIDE_MAP`, proposal `GCM`, profile `VTI-PROFILE`, transform set `AES256-SHA`, tunnel nameifs `vti-spoke1`/`vti-spoke2`/`vti-hub`.
 - Test counts in "Expected" lines are the number of `test_*` functions at that point; trust `0 failed` / `ALL PASSED` if a count is off by one.

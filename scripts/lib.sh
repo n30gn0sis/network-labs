@@ -162,31 +162,46 @@ node_mgmt_ip() {
 }
 
 # asa_exec NODE CMD -> runs CMD on an ASA over SSH to its management address.
-# Env: ASA_USER (admin), ASA_PASS (Admin@123), SSH (ssh), SSHPASS (sshpass).
+# Env: ASA_USER (admin), ASA_PASS (CiscoAsa1!), SSH (ssh), SSHPASS_BIN (sshpass),
+# ASA_SSH_TIMEOUT (30, seconds before the whole ssh call is killed).
+# The sshpass binary override is SSHPASS_BIN, not SSHPASS: sshpass itself reads
+# SSHPASS as the password in `-e` mode, so reusing that name would be ambiguous.
+# `-n` keeps ssh from reading stdin; `timeout` stops a server that ignores exec
+# requests (and just opens an interactive session) from hanging the run.
 asa_exec() {
   local node="$1" cmd="$2" ip
-  local sshpass_bin="${SSHPASS:-sshpass}" ssh_bin="${SSH:-ssh}"
+  local sshpass_bin="${SSHPASS_BIN:-sshpass}" ssh_bin="${SSH:-ssh}"
   command -v "$sshpass_bin" >/dev/null 2>&1 \
     || fail "'$sshpass_bin' not found; ASA checks need sshpass (install: apt install sshpass / brew install hudochenkov/sshpass/sshpass)"
   command -v "$ssh_bin" >/dev/null 2>&1 || fail "'$ssh_bin' not found; ASA checks need an ssh client"
-  ip="$(node_mgmt_ip "$node")"
-  "$sshpass_bin" -p "${ASA_PASS:-Admin@123}" "$ssh_bin" \
+  command -v timeout >/dev/null 2>&1 || fail "'timeout' (coreutils) not found"
+  ip="$(node_mgmt_ip "$node")" || return 1
+  [[ -n "$ip" ]] || return 1
+  timeout "${ASA_SSH_TIMEOUT:-30}" "$sshpass_bin" -p "${ASA_PASS:-CiscoAsa1!}" "$ssh_bin" -n \
     -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
     -o ConnectTimeout=5 -o LogLevel=ERROR \
     "${ASA_USER:-admin}@${ip}" "$cmd"
 }
 
-# _run_on_node NODE CMD -> runs CMD on NODE. Nodes listed in $ASA_NODES (space-separated,
-# exported by a scenario's verify.sh) are reached over SSH via asa_exec; others via docker exec.
-_run_on_node() {
-  local node="$1" cmd="$2" n
+# _is_asa_node NODE -> true when NODE is listed in $ASA_NODES (space-separated,
+# exported by a scenario's verify.sh).
+_is_asa_node() {
+  local n
   for n in ${ASA_NODES:-}; do
-    if [[ "$n" == "$node" ]]; then
-      asa_exec "$node" "$cmd"
-      return
-    fi
+    [[ "$n" == "$1" ]] && return 0
   done
-  node_exec "$node" "$cmd"
+  return 1
+}
+
+# _run_on_node NODE CMD -> runs CMD on NODE. ASA nodes are reached over SSH via
+# asa_exec; others via docker exec.
+_run_on_node() {
+  local node="$1" cmd="$2"
+  if _is_asa_node "$node"; then
+    asa_exec "$node" "$cmd"
+  else
+    node_exec "$node" "$cmd"
+  fi
 }
 
 expect_contains() {
@@ -200,8 +215,13 @@ expect_contains() {
 }
 
 expect_not_contains() {
-  local node="$1" cmd="$2" unexpected="$3" out
-  out="$(_run_on_node "$node" "$cmd" 2>&1)" || true
+  local node="$1" cmd="$2" unexpected="$3" out rc=0
+  out="$(_run_on_node "$node" "$cmd" 2>&1)" || rc=$?
+  # An ASA CLI command exits 0 even with empty output, so a non-zero status there
+  # means the call itself failed (no IP, SSH error, timeout): that is not "absent".
+  if [[ "$rc" -ne 0 ]] && _is_asa_node "$node"; then
+    fail "$node: '$cmd' could not be run (exit $rc), so absence of '$unexpected' is unproven. Output: $out"
+  fi
   if [[ "$out" == *"$unexpected"* ]]; then
     fail "$node: '$cmd' output unexpectedly contained '$unexpected'. Output: $out"
   else

@@ -35,4 +35,22 @@ test_readme_has_quick_start() {
   assert_contains "$r" "docs/conventions.md"
 }
 
+test_docs_mention_asa_conventions() {
+  local c; c="$(cat "$REPO_ROOT/docs/conventions.md")"
+  assert_contains "$c" "ASA_NODES"
+  assert_contains "$c" "asa_exec"
+  assert_contains "$c" "sshpass"
+  assert_contains "$c" "ASA_USER"
+  assert_contains "$c" "expect_not_contains"
+}
+test_images_readme_lists_asav() {
+  local i; i="$(cat "$REPO_ROOT/images/README.md")"
+  assert_contains "$i" "vrnetlab/cisco_asav"
+  assert_contains "$i" "ASAv"
+}
+test_simulator_docs_map_asav() {
+  assert_contains "$(cat "$REPO_ROOT/docs/simulators/gns3.md")" "| \`cisco_asav\` |"
+  assert_contains "$(cat "$REPO_ROOT/docs/simulators/eve-ng.md")" "| \`cisco_asav\` |"
+}
+
 run_tests
