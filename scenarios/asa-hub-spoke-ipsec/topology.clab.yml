@@ -1,0 +1,53 @@
+# Single source of truth. Node names are the key for configs/, variants/ and export/.
+# ASAv interface mapping in containerlab: eth1 = GigabitEthernet0/0 (outside), eth2 = GigabitEthernet0/1 (inside).
+# The wan node is a Linux container bridging its three ports: a flat stand-in for the internet.
+name: asa-hub-spoke-ipsec
+
+topology:
+  nodes:
+    asa-hub:
+      kind: cisco_asav
+      image: vrnetlab/cisco_asav:9.18.4
+      startup-config: configs/asa-hub/startup.cfg
+    asa-spoke1:
+      kind: cisco_asav
+      image: vrnetlab/cisco_asav:9.18.4
+      startup-config: configs/asa-spoke1/startup.cfg
+    asa-spoke2:
+      kind: cisco_asav
+      image: vrnetlab/cisco_asav:9.18.4
+      startup-config: configs/asa-spoke2/startup.cfg
+    h1:
+      kind: linux
+      image: wbitt/network-multitool:latest
+      exec:
+        - ip addr add 10.1.0.10/24 dev eth1
+        - ip route add 10.0.0.0/8 via 10.1.0.1
+    h2:
+      kind: linux
+      image: wbitt/network-multitool:latest
+      exec:
+        - ip addr add 10.2.0.10/24 dev eth1
+        - ip route add 10.0.0.0/8 via 10.2.0.1
+    h3:
+      kind: linux
+      image: wbitt/network-multitool:latest
+      exec:
+        - ip addr add 10.3.0.10/24 dev eth1
+        - ip route add 10.0.0.0/8 via 10.3.0.1
+    wan:
+      kind: linux
+      image: wbitt/network-multitool:latest
+      exec:
+        - ip link add br0 type bridge
+        - ip link set eth1 master br0
+        - ip link set eth2 master br0
+        - ip link set eth3 master br0
+        - ip link set br0 up
+  links:
+    - endpoints: ["asa-hub:eth1", "wan:eth1"]
+    - endpoints: ["asa-spoke1:eth1", "wan:eth2"]
+    - endpoints: ["asa-spoke2:eth1", "wan:eth3"]
+    - endpoints: ["asa-hub:eth2", "h1:eth1"]
+    - endpoints: ["asa-spoke1:eth2", "h2:eth1"]
+    - endpoints: ["asa-spoke2:eth2", "h3:eth1"]

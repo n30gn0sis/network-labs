@@ -1,0 +1,23 @@
+# ASA hub-and-spoke IPsec. Topology in topology.clab.yml; variants swap ASA configs only.
+name: asa-hub-spoke-ipsec
+title: ASA hub-and-spoke site-to-site IPsec (VTI and crypto-map variants)
+topic: security/ipsec
+status: draft                     # flip to ready after a real containerlab run per variant (see README)
+default_variant: vti-ikev2
+variants:
+  vti-ikev2:
+    images:
+      asa: vrnetlab/cisco_asav:9.18.4
+    notes: route-based VTI over IKEv2; requires ASA 9.8+. Configs in configs/.
+  cryptomap-ikev2:
+    images:
+      asa: vrnetlab/cisco_asav:9.18.4
+    notes: policy-based crypto maps over IKEv2; any ASA 9.x.
+  cryptomap-ikev1:
+    images:
+      asa: vrnetlab/cisco_asav:9.18.4
+    notes: policy-based crypto maps over IKEv1; any ASA 9.x.
+simulators:
+  containerlab: native
+  gns3: none
+  eve-ng: none
