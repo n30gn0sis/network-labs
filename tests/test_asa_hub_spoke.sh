@@ -176,11 +176,15 @@ assert_cryptomap_structure() {
   assert_contains "$hub" "same-security-traffic permit intra-interface"
   assert_not_contains "$hub" "interface Tunnel"
   # spokes
-  assert_contains "$s1" "access-list L2L-HUB extended permit ip 10.2.0.0 255.255.255.0 10.0.0.0 255.0.0.0"
+  assert_contains "$s1" "access-list L2L-HUB extended permit ip 10.2.0.0 255.255.255.0 10.1.0.0 255.255.255.0"
+  assert_contains "$s1" "access-list L2L-HUB extended permit ip 10.2.0.0 255.255.255.0 10.3.0.0 255.255.255.0"
+  assert_not_contains "$(grep '^access-list' <<<"$s1")" "255.0.0.0"
   assert_contains "$s1" "crypto map OUTSIDE_MAP 10 set peer 203.0.113.1"
   assert_contains "$s1" "route outside 10.0.0.0 255.0.0.0 203.0.113.1"
   assert_contains "$s1" "crypto $ike enable outside"
-  assert_contains "$s2" "access-list L2L-HUB extended permit ip 10.3.0.0 255.255.255.0 10.0.0.0 255.0.0.0"
+  assert_contains "$s2" "access-list L2L-HUB extended permit ip 10.3.0.0 255.255.255.0 10.1.0.0 255.255.255.0"
+  assert_contains "$s2" "access-list L2L-HUB extended permit ip 10.3.0.0 255.255.255.0 10.2.0.0 255.255.255.0"
+  assert_not_contains "$(grep '^access-list' <<<"$s2")" "255.0.0.0"
   assert_contains "$s2" "crypto map OUTSIDE_MAP 10 set peer 203.0.113.1"
   assert_contains "$s2" "route outside 10.0.0.0 255.0.0.0 203.0.113.1"
   # psks
@@ -194,12 +198,18 @@ test_cryptomap_ikev2_patch_only_repoints_startup_configs() {
   assert_eq "asa-hub asa-spoke1 asa-spoke2" "$(yq -r '.topology.nodes | keys | sort | join(" ")' "$p")"
   assert_eq "startup-config" "$(yq -r '[.topology.nodes[] | keys[]] | unique | join(" ")' "$p")"
   assert_eq "variants/cryptomap-ikev2/configs/asa-hub/startup.cfg" "$(yq -r '.topology.nodes["asa-hub"]["startup-config"]' "$p")"
+  assert_eq "variants/cryptomap-ikev2/configs/asa-spoke1/startup.cfg" "$(yq -r '.topology.nodes["asa-spoke1"]["startup-config"]' "$p")"
+  assert_eq "variants/cryptomap-ikev2/configs/asa-spoke2/startup.cfg" "$(yq -r '.topology.nodes["asa-spoke2"]["startup-config"]' "$p")"
 }
 test_cryptomap_ikev2_built_topology_keeps_images_and_hosts() {
   local t; t="$(built cryptomap-ikev2)"
   assert_eq "vrnetlab/cisco_asav:9.18.4" "$(yq -r '.topology.nodes["asa-hub"].image' "$t")"
   assert_eq 7 "$(yq -r '.topology.nodes | length' "$t")"
   assert_eq 6 "$(yq -r '.topology.links | length' "$t")"
+  assert_eq "variants/cryptomap-ikev2/configs/asa-hub/startup.cfg" "$(yq -r '.topology.nodes["asa-hub"]["startup-config"]' "$t")"
+  assert_eq "variants/cryptomap-ikev2/configs/asa-spoke1/startup.cfg" "$(yq -r '.topology.nodes["asa-spoke1"]["startup-config"]' "$t")"
+  assert_eq "variants/cryptomap-ikev2/configs/asa-spoke2/startup.cfg" "$(yq -r '.topology.nodes["asa-spoke2"]["startup-config"]' "$t")"
+  assert_eq "wbitt/network-multitool:latest" "$(yq -r '.topology.nodes.h1.image' "$t")"
 }
 test_cryptomap_ikev2_configs() {
   assert_cryptomap_structure cryptomap-ikev2 ikev2

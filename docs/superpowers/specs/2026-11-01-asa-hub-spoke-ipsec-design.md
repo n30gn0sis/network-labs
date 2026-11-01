@@ -128,7 +128,7 @@ the README says so.
   The cross entries (10.3.0.0 → 10.2.0.0 and 10.2.0.0 → 10.3.0.0) are what make
   spoke-to-spoke hairpinning work; the README names this as the classic
   crypto-map gotcha.
-- Spoke crypto ACL `L2L-HUB`: local /24 → 10.0.0.0/8.
+- Spoke crypto ACL `L2L-HUB`: two entries, local /24 → 10.1.0.0/24 and local /24 → the other spoke's /24, exact mirrors of the hub's ACEs (ASA requires mirrored crypto ACLs; no reliance on IKEv2 selector narrowing).
 - `crypto map OUTSIDE_MAP 10` (spoke1) and `20` (spoke2) on the hub, `10` on
   each spoke: `match address`, `set peer`, `set ikev2 ipsec-proposal GCM`;
   `crypto map OUTSIDE_MAP interface outside`.
