@@ -270,4 +270,16 @@ test_verify_fails_when_no_reroute_and_still_restores_link() {
   [[ ! -e "$root/eth2_down" ]] || return 1
 }
 
+test_readme_documents_scenario() {
+  local r; r="$(cat "$SCN/README.md")"
+  for s in "## Objective" "## Topology" "## Routing design" "## Verification" "## Failover walkthrough" "## Validation on a containerlab host"; do
+    assert_contains "$r" "$s"
+  done
+  assert_contains "$r" "r1:eth2"
+  assert_contains "$r" "default-information originate"
+  assert_contains "$r" "no bgp ebgp-requires-policy"
+  assert_contains "$r" "scripts/up.sh ospf-ebgp-two-as --force"
+  assert_contains "$r" "OSPF_TIMEOUT"
+}
+
 run_tests
