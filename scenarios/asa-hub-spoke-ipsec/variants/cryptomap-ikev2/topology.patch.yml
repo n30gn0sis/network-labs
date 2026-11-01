@@ -1,0 +1,9 @@
+# Only the ASA startup configs change; images, hosts and links come from topology.clab.yml.
+topology:
+  nodes:
+    asa-hub:
+      startup-config: variants/cryptomap-ikev2/configs/asa-hub/startup.cfg
+    asa-spoke1:
+      startup-config: variants/cryptomap-ikev2/configs/asa-spoke1/startup.cfg
+    asa-spoke2:
+      startup-config: variants/cryptomap-ikev2/configs/asa-spoke2/startup.cfg

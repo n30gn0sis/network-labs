@@ -153,4 +153,61 @@ test_vti_psks_match_per_pair() {
   assert_not_contains "$hub$s1$s2" "pre-shared-key $"
 }
 
+# assert_cryptomap_structure VARIANT IKE(ikev1|ikev2): ACLs, crypto map, routes, hairpin entries
+assert_cryptomap_structure() {
+  local v="$1" ike="$2" hub s1 s2
+  hub="$(cat "$(cfg_of "$v" asa-hub)")"; s1="$(cat "$(cfg_of "$v" asa-spoke1)")"; s2="$(cat "$(cfg_of "$v" asa-spoke2)")"
+  assert_common_base "$(cfg_of "$v" asa-hub)" asa-hub 10.1.0.1 203.0.113.1
+  assert_common_base "$(cfg_of "$v" asa-spoke1)" asa-spoke1 10.2.0.1 203.0.113.2
+  assert_common_base "$(cfg_of "$v" asa-spoke2)" asa-spoke2 10.3.0.1 203.0.113.3
+  # hub ACLs incl. spoke-to-spoke hairpin entries
+  assert_contains "$hub" "access-list L2L-SPOKE1 extended permit ip 10.1.0.0 255.255.255.0 10.2.0.0 255.255.255.0"
+  assert_contains "$hub" "access-list L2L-SPOKE1 extended permit ip 10.3.0.0 255.255.255.0 10.2.0.0 255.255.255.0"
+  assert_contains "$hub" "access-list L2L-SPOKE2 extended permit ip 10.1.0.0 255.255.255.0 10.3.0.0 255.255.255.0"
+  assert_contains "$hub" "access-list L2L-SPOKE2 extended permit ip 10.2.0.0 255.255.255.0 10.3.0.0 255.255.255.0"
+  assert_contains "$hub" "crypto map OUTSIDE_MAP 10 match address L2L-SPOKE1"
+  assert_contains "$hub" "crypto map OUTSIDE_MAP 10 set peer 203.0.113.2"
+  assert_contains "$hub" "crypto map OUTSIDE_MAP 20 match address L2L-SPOKE2"
+  assert_contains "$hub" "crypto map OUTSIDE_MAP 20 set peer 203.0.113.3"
+  assert_contains "$hub" "crypto map OUTSIDE_MAP interface outside"
+  assert_contains "$hub" "route outside 10.2.0.0 255.255.255.0 203.0.113.2"
+  assert_contains "$hub" "route outside 10.3.0.0 255.255.255.0 203.0.113.3"
+  assert_contains "$hub" "crypto $ike enable outside"
+  assert_contains "$hub" "same-security-traffic permit intra-interface"
+  assert_not_contains "$hub" "interface Tunnel"
+  # spokes
+  assert_contains "$s1" "access-list L2L-HUB extended permit ip 10.2.0.0 255.255.255.0 10.0.0.0 255.0.0.0"
+  assert_contains "$s1" "crypto map OUTSIDE_MAP 10 set peer 203.0.113.1"
+  assert_contains "$s1" "route outside 10.0.0.0 255.0.0.0 203.0.113.1"
+  assert_contains "$s1" "crypto $ike enable outside"
+  assert_contains "$s2" "access-list L2L-HUB extended permit ip 10.3.0.0 255.255.255.0 10.0.0.0 255.0.0.0"
+  assert_contains "$s2" "crypto map OUTSIDE_MAP 10 set peer 203.0.113.1"
+  assert_contains "$s2" "route outside 10.0.0.0 255.0.0.0 203.0.113.1"
+  # psks
+  assert_contains "$hub" "LAB-PSK-SPOKE1"; assert_contains "$hub" "LAB-PSK-SPOKE2"
+  assert_contains "$s1" "LAB-PSK-SPOKE1"; assert_not_contains "$s1" "LAB-PSK-SPOKE2"
+  assert_contains "$s2" "LAB-PSK-SPOKE2"; assert_not_contains "$s2" "LAB-PSK-SPOKE1"
+}
+test_cryptomap_ikev2_patch_only_repoints_startup_configs() {
+  local p; p="$SCN/variants/cryptomap-ikev2/topology.patch.yml"
+  assert_file_exists "$p"
+  assert_eq "asa-hub asa-spoke1 asa-spoke2" "$(yq -r '.topology.nodes | keys | sort | join(" ")' "$p")"
+  assert_eq "startup-config" "$(yq -r '[.topology.nodes[] | keys[]] | unique | join(" ")' "$p")"
+  assert_eq "variants/cryptomap-ikev2/configs/asa-hub/startup.cfg" "$(yq -r '.topology.nodes["asa-hub"]["startup-config"]' "$p")"
+}
+test_cryptomap_ikev2_built_topology_keeps_images_and_hosts() {
+  local t; t="$(built cryptomap-ikev2)"
+  assert_eq "vrnetlab/cisco_asav:9.18.4" "$(yq -r '.topology.nodes["asa-hub"].image' "$t")"
+  assert_eq 7 "$(yq -r '.topology.nodes | length' "$t")"
+  assert_eq 6 "$(yq -r '.topology.links | length' "$t")"
+}
+test_cryptomap_ikev2_configs() {
+  assert_cryptomap_structure cryptomap-ikev2 ikev2
+  local hub; hub="$(cat "$(cfg_of cryptomap-ikev2 asa-hub)")"
+  assert_contains "$hub" "crypto ipsec ikev2 ipsec-proposal GCM"
+  assert_contains "$hub" "crypto map OUTSIDE_MAP 10 set ikev2 ipsec-proposal GCM"
+  assert_contains "$hub" "ikev2 remote-authentication pre-shared-key LAB-PSK-SPOKE1"
+  assert_not_contains "$hub" "ikev1"
+}
+
 run_tests
