@@ -80,6 +80,7 @@ assert_router_base() { # R ROUTERID
   assert_contains "$c" "hostname $1"
   assert_contains "$c" "interface lo"
   assert_contains "$c" " ip address $2/32"
+  assert_contains "$(sed -n '/^interface lo$/,/^!/p' "$SCN/configs/$1/frr.conf")" " ip ospf area 0" "$1 lo area"
   assert_contains "$c" "router ospf"
   assert_contains "$c" " ospf router-id $2"
   local d; d="$(daemons_of "$1")"
@@ -89,13 +90,18 @@ assert_router_base() { # R ROUTERID
   assert_contains "$d" "vtysh_enable=yes"
   assert_file_exists "$SCN/configs/$1/daemons"
 }
-# Every address the LINKS table assigns to R appears as an `ip address` line.
+# Every address the LINKS table assigns to R appears inside its interface block.
 assert_addresses_from_table() { # R
-  local c a aaddr b baddr; c="$(cfg "$1")"
+  local a aaddr b baddr
+  _assert_addr_in_block() { # R ENDPOINT ADDR
+    local iface="${2#*:}" block
+    block="$(sed -n "/^interface ${iface}\$/,/^!/p" "$SCN/configs/$1/frr.conf")"
+    assert_contains "$block" " ip address $3" "$1 $iface"
+  }
   while read -r a aaddr b baddr; do
     [[ -z "$a" ]] && continue
-    [[ "${a%%:*}" == "$1" ]] && assert_contains "$c" " ip address $aaddr" "$1 ${a#*:}"
-    [[ "${b%%:*}" == "$1" ]] && assert_contains "$c" " ip address $baddr" "$1 ${b#*:}"
+    [[ "${a%%:*}" == "$1" ]] && _assert_addr_in_block "$1" "$a" "$aaddr"
+    [[ "${b%%:*}" == "$1" ]] && _assert_addr_in_block "$1" "$b" "$baddr"
   done <<<"$LINKS"
 }
 # Each listed interface block has area 0, point-to-point and cost 10.
@@ -140,6 +146,44 @@ test_as65001_border_only_on_r3() {
     assert_not_contains "$(cfg "$r")" "default-information"
     assert_contains "$(daemons_of "$r")" "bgpd=no"
   done
+}
+
+test_as65002_configs_exist() {
+  local r; for r in r4 r5 r6; do assert_file_exists "$SCN/configs/$r/frr.conf"; done
+}
+test_as65002_base_and_addresses() {
+  assert_router_base r4 10.2.0.4; assert_addresses_from_table r4
+  assert_router_base r5 10.2.0.5; assert_addresses_from_table r5
+  assert_router_base r6 10.2.0.6; assert_addresses_from_table r6
+}
+test_as65002_ospf_interfaces() {
+  assert_ospf_ptp r4 eth2 eth3
+  assert_ospf_ptp r5 eth1 eth2
+  assert_ospf_ptp r6 eth2 eth3
+  assert_contains "$(cfg r6)" " passive-interface eth1"
+  assert_not_contains "$(sed -n '/^interface eth1$/,/^!/p' "$SCN/configs/r4/frr.conf")" "ip ospf" "eBGP link not in OSPF"
+}
+test_as65002_border_only_on_r4() {
+  local c4; c4="$(cfg r4)"
+  assert_contains "$c4" "router bgp 65002"
+  assert_contains "$c4" " no bgp ebgp-requires-policy"
+  assert_contains "$c4" " neighbor 192.0.2.1 remote-as 65001"
+  assert_contains "$c4" "  network 10.2.0.0/16"
+  assert_contains "$c4" "ip route 10.2.0.0/16 Null0"
+  assert_contains "$c4" " default-information originate always"
+  assert_contains "$(daemons_of r4)" "bgpd=yes"
+  local r
+  for r in r5 r6; do
+    assert_not_contains "$(cfg "$r")" "router bgp"
+    assert_not_contains "$(cfg "$r")" "default-information"
+    assert_contains "$(daemons_of "$r")" "bgpd=no"
+  done
+}
+test_all_bind_sources_exist_in_built_topology() {
+  local t src; t="$(built)"
+  while IFS= read -r src; do
+    assert_file_exists "$(dirname "$t")/$src"
+  done < <(yq -r '.topology.nodes[].binds[]? | split(":") | .[0]' "$t")
 }
 
 run_tests
