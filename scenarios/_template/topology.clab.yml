@@ -1,0 +1,15 @@
+# Single source of truth for this scenario's topology.
+# Node names here are the key used by configs/<node>/, variants/, and export/.
+name: __SCENARIO_NAME__
+
+topology:
+  nodes:
+    r1:
+      kind: linux
+      image: quay.io/frrouting/frr:10.1
+      binds:
+        - configs/r1/frr.conf:/etc/frr/frr.conf
+        - configs/r1/daemons:/etc/frr/daemons
+  links: []
+  # Example link once you have a second node:
+  #   - endpoints: ["r1:eth1", "r2:eth1"]

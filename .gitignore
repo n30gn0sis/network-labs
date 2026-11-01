@@ -1,0 +1,5 @@
+# merged variant topologies and containerlab runtime directories
+scenarios/*/.*.build.clab.yml
+scenarios/*/clab-*/
+# local tooling scratch
+.superpowers/

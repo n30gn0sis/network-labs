@@ -21,7 +21,7 @@ Spec: `docs/superpowers/specs/2026-10-31-multi-simulator-labs-design.md`
 - `.superpowers/` (SDD scratch) is git-ignored.
 - Placeholder token in the template is exactly `__SCENARIO_NAME__`.
 - `scenario.yml` required keys: `name`, `title`, `topic`, `status` (`draft`|`ready`), `default_variant`, `variants.<default_variant>`, `simulators.containerlab`, `simulators.gns3`, `simulators.eve-ng`. `name` must equal the directory name except for `_template`.
-- Merged variant topologies go to `scenarios/<name>/.build/<variant>.clab.yml`, which is git-ignored.
+- Merged variant topologies go to `scenarios/<name>/.<variant>.build.clab.yml` (beside the source topology), which is git-ignored.
 - Tests never need Docker or containerlab. External binaries are injected through `CLAB` (default `containerlab`) and `DOCKER` (default `docker`) environment variables so tests can point them at stubs.
 - Commit after every task. Commit messages: conventional prefix (`feat:`, `test:`, `docs:`, `ci:`), end with the attribution lines given by the harness. No model identifiers anywhere in committed content.
 - Work on branch `ccr-00157a22-qiys9w`.
@@ -32,7 +32,7 @@ Spec: `docs/superpowers/specs/2026-10-31-multi-simulator-labs-design.md`
 
 | Path | Responsibility |
 |---|---|
-| `.gitignore` | ignore `scenarios/*/.build/`, `clab-*/` runtime dirs, `.build/` |
+| `.gitignore` | ignore `scenarios/*/.*.build.clab.yml`, `clab-*/` runtime dirs |
 | `scripts/lib.sh` | shared functions: logging, tool checks, scenario lookup, metadata, validation, variant resolution, topology build, node helpers |
 | `scripts/test.sh` | run `shellcheck` on all scripts, then every `tests/test_*.sh`; exit non-zero on any failure |
 | `tests/helpers.sh` | tiny assertion library and test runner used by every `tests/test_*.sh` |
