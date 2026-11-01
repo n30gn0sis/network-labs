@@ -114,6 +114,10 @@ the README says so.
 - Routes: hub `10.2.0.0/24 → Tunnel1`, `10.3.0.0/24 → Tunnel2`; spokes
   `10.0.0.0/8 → Tunnel1` (covers hub and the other spoke).
 - Spoke-to-spoke works because the hub routes between the two VTIs.
+- All Tunnel interfaces use `security-level 100` and every ASA sets
+  `same-security-traffic permit inter-interface`, because VTI traffic is subject
+  to normal interface security rules (no `sysopt connection permit-vpn` bypass)
+  and would otherwise be dropped toward `inside`.
 - Requires ASA 9.8 or newer.
 
 ### `cryptomap-ikev2` (`variants/cryptomap-ikev2/`)

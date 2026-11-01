@@ -79,7 +79,9 @@ cfg_of() {
   rel="$(N="$2" yq -r '.topology.nodes[strenv(N)]["startup-config"]' "$topo")"
   printf '%s/%s\n' "$(dirname "$topo")" "$rel"
 }
-assert_common_base() { # file hostname inside_ip
+# tunnel_block FILE TUNNEL -> lines of that interface block
+tunnel_block() { sed -n "/^interface $2\$/,/^interface \|^route \|^!/p" "$1"; }
+assert_common_base() { # file hostname inside_ip outside_ip
   local c; c="$(cat "$1")"
   assert_contains "$c" "hostname $2"
   assert_contains "$c" "interface GigabitEthernet0/0"
@@ -89,6 +91,7 @@ assert_common_base() { # file hostname inside_ip
   assert_contains "$c" " nameif inside"
   assert_contains "$c" " security-level 100"
   assert_contains "$c" " ip address $3 255.255.255.0"
+  assert_contains "$c" " ip address $4 255.255.255.0"
   assert_contains "$c" "inspect icmp"
   assert_not_contains "$c" "Management0/0"
   assert_not_contains "$c" "username admin"
@@ -99,9 +102,9 @@ test_vti_startup_configs_exist_for_all_asas() {
   for n in asa-hub asa-spoke1 asa-spoke2; do assert_file_exists "$(cfg_of vti-ikev2 "$n")"; done
 }
 test_vti_configs_share_base() {
-  assert_common_base "$(cfg_of vti-ikev2 asa-hub)" asa-hub 10.1.0.1
-  assert_common_base "$(cfg_of vti-ikev2 asa-spoke1)" asa-spoke1 10.2.0.1
-  assert_common_base "$(cfg_of vti-ikev2 asa-spoke2)" asa-spoke2 10.3.0.1
+  assert_common_base "$(cfg_of vti-ikev2 asa-hub)" asa-hub 10.1.0.1 203.0.113.1
+  assert_common_base "$(cfg_of vti-ikev2 asa-spoke1)" asa-spoke1 10.2.0.1 203.0.113.2
+  assert_common_base "$(cfg_of vti-ikev2 asa-spoke2)" asa-spoke2 10.3.0.1 203.0.113.3
 }
 test_vti_hub_has_two_tunnels_and_routes() {
   local c; c="$(cat "$(cfg_of vti-ikev2 asa-hub)")"
@@ -117,6 +120,8 @@ test_vti_hub_has_two_tunnels_and_routes() {
   assert_contains "$c" "same-security-traffic permit inter-interface"
   assert_contains "$c" "same-security-traffic permit intra-interface"
   assert_not_contains "$c" "crypto map"
+  assert_contains "$(tunnel_block "$(cfg_of vti-ikev2 asa-hub)" Tunnel1)" " security-level 100"
+  assert_contains "$(tunnel_block "$(cfg_of vti-ikev2 asa-hub)" Tunnel2)" " security-level 100"
 }
 test_vti_spokes_tunnel_to_hub() {
   local c
@@ -124,10 +129,14 @@ test_vti_spokes_tunnel_to_hub() {
   assert_contains "$c" " tunnel destination 203.0.113.1"
   assert_contains "$c" " ip address 169.254.1.2 255.255.255.252"
   assert_contains "$c" "route vti-hub 10.0.0.0 255.0.0.0 169.254.1.1"
+  assert_contains "$c" "same-security-traffic permit inter-interface"
+  assert_contains "$(tunnel_block "$(cfg_of vti-ikev2 asa-spoke1)" Tunnel1)" " security-level 100"
   c="$(cat "$(cfg_of vti-ikev2 asa-spoke2)")"
   assert_contains "$c" " tunnel destination 203.0.113.1"
   assert_contains "$c" " ip address 169.254.2.2 255.255.255.252"
   assert_contains "$c" "route vti-hub 10.0.0.0 255.0.0.0 169.254.2.1"
+  assert_contains "$c" "same-security-traffic permit inter-interface"
+  assert_contains "$(tunnel_block "$(cfg_of vti-ikev2 asa-spoke2)" Tunnel1)" " security-level 100"
 }
 test_vti_psks_match_per_pair() {
   local hub s1 s2
