@@ -112,4 +112,68 @@ test_all_bind_sources_exist_in_built_topology() {
   assert_eq 8 "$n" "bind source count"
 }
 
+cfg() { cat "$SCN/configs/$1/frr.conf"; }
+daemons_of() { cat "$SCN/configs/$1/daemons"; }
+# Print one config block: from the line equal to $2 up to the next "!" line.
+block() { sed -n "/^$2\$/,/^!/p" "$SCN/configs/$1/frr.conf"; }
+
+# Every router: hostname, loopback, BGP base in its ASN, daemons sane.
+assert_router_base() { # NODE LOOPBACK ASN
+  local c; c="$(cfg "$1")"
+  assert_contains "$c" "hostname $1"
+  assert_contains "$(block "$1" "interface lo")" " ip address $2/32" "$1 loopback"
+  assert_contains "$c" "router bgp $3"
+  assert_contains "$c" " bgp router-id $2"
+  local d; d="$(daemons_of "$1")"
+  assert_contains "$d" "zebra=yes"
+  assert_contains "$d" "bgpd=yes"
+  assert_contains "$d" "ospfd=no"
+  assert_contains "$d" "staticd=yes"
+  assert_contains "$d" "vtysh_enable=yes"
+}
+# Unnumbered fabric peering shared by spines and leaves.
+assert_fabric_bgp() { # NODE
+  local b; b="$(sed -n '/^router bgp /,/^!/p' "$SCN/configs/$1/frr.conf")"
+  assert_contains "$b" " no bgp ebgp-requires-policy"
+  assert_contains "$b" " no bgp default ipv4-unicast"
+  assert_contains "$b" " bgp bestpath as-path multipath-relax"
+  assert_contains "$b" " neighbor fabric peer-group"
+  assert_contains "$b" " neighbor fabric remote-as external"
+  assert_contains "$b" " neighbor eth1 interface peer-group fabric"
+  assert_contains "$b" " neighbor eth2 interface peer-group fabric"
+  assert_contains "$b" " address-family ipv4 unicast"
+  assert_contains "$b" "  redistribute connected"
+  assert_contains "$b" " address-family l2vpn evpn"
+  assert_eq 2 "$(grep -c '  neighbor fabric activate' <<<"$b")" "$1 activates the peer-group in both address families"
+  assert_not_contains "$b" "neighbor eth3" "$1 host port is not a BGP peer"
+}
+# Router advertisements on each listed fabric interface (leaves learn link-local peers from them).
+assert_ra_on() { # NODE IFACE...
+  local r="$1"; shift
+  local i b
+  for i in "$@"; do
+    b="$(block "$r" "interface $i")"
+    assert_contains "$b" " no ipv6 nd suppress-ra" "$r $i RA enabled"
+    assert_contains "$b" " ipv6 nd ra-interval 10" "$r $i RA interval"
+    assert_not_contains "$b" " ip address" "$r $i is unnumbered"
+  done
+}
+
+test_spine_configs_exist() {
+  local r; for r in $SPINES; do assert_file_exists "$SCN/configs/$r/frr.conf"; assert_file_exists "$SCN/configs/$r/daemons"; done
+}
+test_spine_base_and_fabric_bgp() {
+  assert_router_base spine1 10.0.0.1 65100; assert_fabric_bgp spine1; assert_ra_on spine1 eth1 eth2
+  assert_router_base spine2 10.0.0.2 65100; assert_fabric_bgp spine2; assert_ra_on spine2 eth1 eth2
+}
+test_spines_relay_evpn_without_vtep_role() {
+  local r c
+  for r in $SPINES; do
+    c="$(cfg "$r")"
+    assert_not_contains "$c" "advertise-all-vni" "$r is not a VTEP"
+    assert_not_contains "$c" " vni 10" "$r has no VNI block"
+    assert_not_contains "$c" "route-target" "$r has no route-targets"
+  done
+}
+
 run_tests
