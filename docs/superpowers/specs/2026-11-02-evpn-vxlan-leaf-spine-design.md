@@ -34,18 +34,22 @@ and Linux kernel bridging and VXLAN as the dataplane.
 ## Topology
 
 ```
-          spine1 (AS 65100)          spine2 (AS 65100)
-          10.0.0.1                   10.0.0.2
-           /      \                  /      \
-      eth1/        \eth2        eth1/        \eth2
-         /          \              /          \
-   eth1 /       eth2 \        eth1/        eth2 \
-   leaf1 ───────────────────────┘               leaf2
-   AS 65001  (eth2 ─────────────────────────────┘)  AS 65002
-   10.0.0.11                                      10.0.0.12
-     │ eth3                                          │ eth3
-     h1  10.10.0.1/24                                h2  10.10.0.2/24
-                 VLAN 10 stretched over VXLAN VNI 10
+      spine1 (AS 65100, 10.0.0.1)        spine2 (AS 65100, 10.0.0.2)
+        eth1          eth2                 eth1          eth2
+         |              |                   |              |
+         |              +-------------------|---------+    |
+         |                                  |         |    |
+         |     +----------------------------+         |    |
+         |     |                                      |    |
+        eth1  eth2                                   eth1  eth2
+      leaf1 (AS 65001, VTEP 10.0.0.11)           leaf2 (AS 65002, VTEP 10.0.0.12)
+        eth3                                           eth3
+         |                                              |
+        h1 10.10.0.1/24                                h2 10.10.0.2/24
+
+      leaf1:eth1 -> spine1:eth1   leaf1:eth2 -> spine2:eth1
+      leaf2:eth1 -> spine1:eth2   leaf2:eth2 -> spine2:eth2
+      VLAN 10 stretched between the leaves over VXLAN VNI 10
 ```
 
 Each leaf has two uplinks: `eth1` to `spine1` and `eth2` to `spine2`.
@@ -131,8 +135,12 @@ router bgp <asn>
 ```
 
 `redistribute connected` is what carries each loopback into the underlay;
-there are no other connected IPv4 networks on a router (fabric links are
-unnumbered, the host-facing port is a bridge member with no address).
+fabric links are unnumbered and the host-facing port is a bridge member with
+no address. The containerlab management interface `eth0` (172.20.20.0/24) is
+also a connected IPv4 network, so `redistribute connected` carries the
+management subnet into the fabric as well. That is harmless because the
+connected route wins on every router; a prefix-list route-map would filter it
+in a production design.
 `multipath-relax` is not strictly required here, since both paths to a remote
 loopback carry the identical AS path `65100 650xx`, but it is the conventional
 line in an unnumbered fabric and keeps the design robust to later changes
@@ -145,7 +153,6 @@ Inside `address-family l2vpn evpn`:
 ```
   advertise-all-vni
   vni 10
-   rd auto
    route-target import 65000:10
    route-target export 65000:10
   exit-vni
@@ -179,6 +186,7 @@ Spines:
 exec:
   - ip route del default
   - sysctl -qw net.ipv6.conf.all.disable_ipv6=0
+  - sysctl -qw net.ipv6.conf.default.disable_ipv6=0
 ```
 
 Leaves (`leaf1` shown; `leaf2` uses `local 10.0.0.12`):
@@ -187,9 +195,11 @@ Leaves (`leaf1` shown; `leaf2` uses `local 10.0.0.12`):
 exec:
   - ip route del default
   - sysctl -qw net.ipv6.conf.all.disable_ipv6=0
+  - sysctl -qw net.ipv6.conf.default.disable_ipv6=0
   - ip link add br10 type bridge
   - ip link add vxlan10 type vxlan id 10 local 10.0.0.11 dstport 4789 nolearning
   - ip link set vxlan10 master br10
+  - bridge link set dev vxlan10 learning off
   - ip link set eth3 master br10
   - ip link set br10 up
   - ip link set vxlan10 up
@@ -209,10 +219,12 @@ Why each line is there:
   unnumbered needs an IPv6 link-local address on every fabric interface, and
   Docker can start a container with IPv6 disabled depending on the host's
   daemon settings. Setting `all.disable_ipv6=0` enables it on every interface
-  the container already has, which is all of them by the time `exec` runs.
-- `nolearning` disables kernel MAC learning on the VXLAN device, so remote
-  MACs enter the bridge FDB only through EVPN type-2 routes installed by
-  zebra. That is what makes `show evpn mac vni 10` a meaningful test rather
+  the container already has, which is all of them by the time `exec` runs;
+  `default.disable_ipv6=0` covers interfaces created afterwards.
+- `nolearning` disables learning in the VXLAN FDB only; the bridge still
+  learns on the `vxlan10` port, so `bridge link set dev vxlan10 learning off`
+  turns that off too. With both off, remote MACs enter the bridge FDB only
+  through EVPN type-2 routes installed by zebra. That is what makes `show evpn mac vni 10` a meaningful test rather
   than a mirror of flooded traffic.
 - `local 10.0.0.11` pins the VTEP source address to the loopback. FRR reads
   it from the device to pick the VTEP IP it advertises in type-3 routes.
@@ -335,8 +347,14 @@ README's validation section:
 |---|---|---|
 | IPv6 disabled on fabric veths despite the sysctl | BGP neighbours stay `Active`; `ip -6 addr show eth1` has no `fe80::` | Add per-interface `net.ipv6.conf.eth1.disable_ipv6=0` lines to `exec`. |
 | Container lacks `NET_ADMIN` for `ip link add vxlan` | `exec` line fails in `containerlab deploy` output; no `vxlan10` | Add `privileged: true` (or the capability) to the leaf nodes in the topology. |
-| Spines rewrite the EVPN next hop to themselves | `show bgp l2vpn evpn` on a leaf shows the spine loopback as next hop; no remote VTEP | Add `neighbor fabric next-hop-unchanged` under `address-family l2vpn evpn` on the spines. |
+| Spines rewrite the EVPN next hop to themselves | `show bgp l2vpn evpn` on a leaf shows the spine loopback as next hop; no remote VTEP | Add `neighbor fabric attribute-unchanged next-hop` under `address-family l2vpn evpn` on the spines (not expected: FRR keeps the EVPN next hop on eBGP by default). |
 | Next-hop line format differs from `fe80::…, via eth1, weight 1` | Step 3 or 6 count check fails although `ip route` shows two paths | Adjust the grep pattern; the stub output is updated to the real format so the tests keep matching reality. |
+| `exec:` runs before the veths exist, or `/proc/sys` is read-only on a non-privileged node | `Cannot find device eth3` or `sysctl: Read-only file system` in the deploy log | Confirm containerlab runs `linux` nodes privileged and runs `exec:` after link creation; otherwise add `privileged: true` to the nodes. |
+| Host kernel lacks the `vxlan` or `bridge` module (containers cannot modprobe) | `ip link add vxlan10` fails with `Unknown device type` | `modprobe vxlan bridge` on the host before deploy. |
+| MTU: `vxlan10` defaults to 1450 while the veths are larger | Small pings work; large frames are dropped at `br10` | Set `mtu 1450` on the hosts' `eth1`, or raise the VXLAN MTU. |
+| Slow initial BGP convergence with `frr defaults traditional` (connect-retry 120 s) | Step 2 times out on a slow host | Raise `BGP_TIMEOUT`, or switch the configs to `frr defaults datacenter`. |
+
+The multitool `ping` must be the iputils one (it prints `N received`); BusyBox ping prints `N packets received` and would fail step 5.
 
 The commit that flips `status` to `ready` records the FRR image tag and
 containerlab version in the README.

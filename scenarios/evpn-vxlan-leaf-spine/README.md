@@ -13,18 +13,22 @@ only.
 ## Topology
 
 ```
-          spine1 (AS 65100)          spine2 (AS 65100)
-          10.0.0.1                   10.0.0.2
-           /      \                  /      \
-      eth1/        \eth2        eth1/        \eth2
-         /          \              /          \
-   eth1 /       eth2 \        eth1/        eth2 \
-   leaf1 ───────────────────────┘               leaf2
-   AS 65001  (eth2 ─────────────────────────────┘)  AS 65002
-   10.0.0.11                                      10.0.0.12
-     │ eth3                                          │ eth3
-     h1  10.10.0.1/24                                h2  10.10.0.2/24
-                 VLAN 10 stretched over VXLAN VNI 10
+      spine1 (AS 65100, 10.0.0.1)        spine2 (AS 65100, 10.0.0.2)
+        eth1          eth2                 eth1          eth2
+         |              |                   |              |
+         |              +-------------------|---------+    |
+         |                                  |         |    |
+         |     +----------------------------+         |    |
+         |     |                                      |    |
+        eth1  eth2                                   eth1  eth2
+      leaf1 (AS 65001, VTEP 10.0.0.11)           leaf2 (AS 65002, VTEP 10.0.0.12)
+        eth3                                           eth3
+         |                                              |
+        h1 10.10.0.1/24                                h2 10.10.0.2/24
+
+      leaf1:eth1 -> spine1:eth1   leaf1:eth2 -> spine2:eth1
+      leaf2:eth1 -> spine1:eth2   leaf2:eth2 -> spine2:eth2
+      VLAN 10 stretched between the leaves over VXLAN VNI 10
 ```
 
 A draw.io version of this topology lives at
@@ -59,7 +63,10 @@ uplink to `spine1` that the failover test takes down.
   suppress-ra`, `ipv6 nd ra-interval 10`) and peers with `neighbor ethN
   interface peer-group fabric`, so BGP runs over the link-local address it
   learns from the other end. `redistribute connected` is what puts each
-  loopback into the underlay. `no bgp ebgp-requires-policy` is needed because
+  loopback into the underlay. It also carries the management subnet
+  (containerlab's 172.20.20.0/24 on `eth0`) into the fabric, which is harmless
+  because the connected route wins on every router; a production design would
+  filter it with a prefix-list route-map. `no bgp ebgp-requires-policy` is needed because
   FRR refuses to exchange eBGP routes without it or a route-map.
 - **One AS for both spines, one AS per leaf.** A leaf sees the same AS path
   (`65100 650xx`) to the other leaf's loopback through either spine, so both
@@ -79,8 +86,10 @@ uplink to `spine1` that the failover test takes down.
 - **Linux dataplane from `exec:`.** Each leaf creates bridge `br10`, the VXLAN
   device `vxlan10` (`id 10`, `local <loopback>`, `dstport 4789`,
   `nolearning`), enslaves `vxlan10` and the host-facing `eth3` to the bridge,
-  and brings them up. `nolearning` turns off kernel MAC learning on the VXLAN
-  device, so remote MACs enter the bridge only through EVPN, which is what
+  turns bridge-port learning off on `vxlan10` (`bridge link set dev vxlan10
+  learning off`), and brings them up. `nolearning` turns off learning in the
+  VXLAN FDB and the bridge-port setting turns off learning on the `vxlan10`
+  port, so remote MACs come only from EVPN, which is what
   makes `show evpn mac vni 10` a meaningful test. `eth3` is an untagged
   access port, so the hosts need no VLAN awareness.
 - **Hosts have no gateway.** This scenario proves L2 extension only: `h1` and
@@ -167,14 +176,20 @@ scripts/verify.sh evpn-vxlan-leaf-spine || echo "FAIL"
 scripts/down.sh evpn-vxlan-leaf-spine
 ```
 
+The multitool `ping` must be the iputils one (it prints `N received`); BusyBox ping prints `N packets received` and would fail step 5.
+
 Known risks to confirm on that run, each with its fallback:
 
 | Risk | Symptom | Fallback |
 |---|---|---|
 | IPv6 disabled on fabric veths despite the sysctl | BGP neighbours stay `Active`; `ip -6 addr show eth1` has no `fe80::` | Add per-interface `net.ipv6.conf.eth1.disable_ipv6=0` lines to `exec:`. |
 | Container lacks `NET_ADMIN` for `ip link add vxlan` | `exec` line fails in `containerlab deploy` output; no `vxlan10` | Add `privileged: true` (or the capability) to the leaf nodes in the topology. |
-| Spines rewrite the EVPN next hop to themselves | `show bgp l2vpn evpn` on a leaf shows the spine loopback as next hop; no remote VTEP | Add `neighbor fabric next-hop-unchanged` under `address-family l2vpn evpn` on the spines. |
+| Spines rewrite the EVPN next hop to themselves | `show bgp l2vpn evpn` on a leaf shows the spine loopback as next hop; no remote VTEP | Add `neighbor fabric attribute-unchanged next-hop` under `address-family l2vpn evpn` on the spines (not expected: FRR keeps the EVPN next hop on eBGP by default). |
 | Next-hop line format differs from `fe80::…, via eth1, weight 1` | Step 3 or 6 count check fails although `ip route` shows two paths | Adjust the grep pattern in `verify.sh` and the stub in `tests/test_evpn_vxlan.sh` to the real format. |
+| `exec:` runs before the veths exist, or `/proc/sys` is read-only on a non-privileged node | `Cannot find device eth3` or `sysctl: Read-only file system` in the deploy log | Confirm containerlab runs `linux` nodes privileged and runs `exec:` after link creation; otherwise add `privileged: true` to the nodes. |
+| Host kernel lacks the `vxlan` or `bridge` module (containers cannot modprobe) | `ip link add vxlan10` fails with `Unknown device type` | `modprobe vxlan bridge` on the host before deploy. |
+| MTU: `vxlan10` defaults to 1450 while the veths are larger | Small pings work; large frames are dropped at `br10` | Set `mtu 1450` on the hosts' `eth1`, or raise the VXLAN MTU. |
+| Slow initial BGP convergence with `frr defaults traditional` (connect-retry 120 s) | Step 2 times out on a slow host | Raise `BGP_TIMEOUT`, or switch the configs to `frr defaults datacenter`. |
 
 The commit that flips `status` to `ready` records the versions used:
 
@@ -195,9 +210,11 @@ this scenario by hand runs the leaf plumbing in each leaf's console:
 ```
 ip route del default
 sysctl -qw net.ipv6.conf.all.disable_ipv6=0
+sysctl -qw net.ipv6.conf.default.disable_ipv6=0
 ip link add br10 type bridge
 ip link add vxlan10 type vxlan id 10 local 10.0.0.11 dstport 4789 nolearning   # 10.0.0.12 on leaf2
 ip link set vxlan10 master br10
+bridge link set dev vxlan10 learning off
 ip link set eth3 master br10
 ip link set br10 up
 ip link set vxlan10 up

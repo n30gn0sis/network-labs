@@ -24,8 +24,8 @@ Spec: `docs/superpowers/specs/2026-11-02-evpn-vxlan-leaf-spine-design.md`
   - `leaf2:eth2` ↔ `spine2:eth2`
   - `leaf1:eth3` ↔ `h1:eth1` (h1 10.10.0.1/24)
   - `leaf2:eth3` ↔ `h2:eth1` (h2 10.10.0.2/24)
-- Every router `exec:` starts with `ip route del default` then `sysctl -qw net.ipv6.conf.all.disable_ipv6=0`. Leaves add, in order: `ip link add br10 type bridge`, `ip link add vxlan10 type vxlan id 10 local <loopback> dstport 4789 nolearning`, `ip link set vxlan10 master br10`, `ip link set eth3 master br10`, `ip link set br10 up`, `ip link set vxlan10 up`, `ip link set eth3 up`. Spines have no `ip link` lines. Hosts: `ip addr add 10.10.0.N/24 dev eth1` only, no default route changes.
-- BGP on every router: `bgp router-id <loopback>`, `no bgp ebgp-requires-policy`, `no bgp default ipv4-unicast`, `bgp bestpath as-path multipath-relax`, `neighbor fabric peer-group`, `neighbor fabric remote-as external`, `neighbor eth1 interface peer-group fabric`, `neighbor eth2 interface peer-group fabric`; `address-family ipv4 unicast` with `neighbor fabric activate` and `redistribute connected`; `address-family l2vpn evpn` with `neighbor fabric activate`. Leaves add `advertise-all-vni` and a `vni 10` block with `rd auto`, `route-target import 65000:10`, `route-target export 65000:10`. Interfaces `eth1` and `eth2` on every router carry `no ipv6 nd suppress-ra` and `ipv6 nd ra-interval 10`.
+- Every router `exec:` starts with `ip route del default` then `sysctl -qw net.ipv6.conf.all.disable_ipv6=0`, then `sysctl -qw net.ipv6.conf.default.disable_ipv6=0`. Leaves add, in order: `ip link add br10 type bridge`, `ip link add vxlan10 type vxlan id 10 local <loopback> dstport 4789 nolearning`, `ip link set vxlan10 master br10`, `bridge link set dev vxlan10 learning off`, `ip link set eth3 master br10`, `ip link set br10 up`, `ip link set vxlan10 up`, `ip link set eth3 up`. Spines have no `ip link` lines. Hosts: `ip addr add 10.10.0.N/24 dev eth1` only, no default route changes.
+- BGP on every router: `bgp router-id <loopback>`, `no bgp ebgp-requires-policy`, `no bgp default ipv4-unicast`, `bgp bestpath as-path multipath-relax`, `neighbor fabric peer-group`, `neighbor fabric remote-as external`, `neighbor eth1 interface peer-group fabric`, `neighbor eth2 interface peer-group fabric`; `address-family ipv4 unicast` with `neighbor fabric activate` and `redistribute connected`; `address-family l2vpn evpn` with `neighbor fabric activate`. Leaves add `advertise-all-vni` and a `vni 10` block with `route-target import 65000:10`, `route-target export 65000:10`. Interfaces `eth1` and `eth2` on every router carry `no ipv6 nd suppress-ra` and `ipv6 nd ra-interval 10`.
 - `daemons`: `zebra=yes`, `bgpd=yes`, `staticd=yes`, `ospfd=no`, rest `no`; `vtysh_enable=yes` and the `*_options` lines as in the OSPF scenario.
 - Verification env knobs: `BOOT_TIMEOUT` (60), `BGP_TIMEOUT` (120), `EVPN_TIMEOUT` (60). `WAIT_INTERVAL` is lib.sh's existing knob.
 - Container names are `clab-evpn-vxlan-leaf-spine-<node>`.
@@ -135,6 +135,7 @@ test_routers_housekeeping_exec() {
     e="$(exec_of "$r")"
     assert_eq "ip route del default" "$(head -1 <<<"$e")" "$r drops the management default first"
     assert_contains "$e" "sysctl -qw net.ipv6.conf.all.disable_ipv6=0" "$r enables IPv6 for BGP unnumbered"
+    assert_contains "$e" "sysctl -qw net.ipv6.conf.default.disable_ipv6=0" "$r enables IPv6 on interfaces created later"
   done
   for r in $SPINES; do
     assert_not_contains "$(exec_of "$r")" "ip link" "$r has no dataplane plumbing"
@@ -146,6 +147,7 @@ test_leaf_dataplane_exec() {
   assert_contains "$e" "ip link add br10 type bridge"
   assert_contains "$e" "ip link add vxlan10 type vxlan id 10 local 10.0.0.11 dstport 4789 nolearning"
   assert_contains "$e" "ip link set vxlan10 master br10"
+  assert_contains "$e" "bridge link set dev vxlan10 learning off"
   assert_contains "$e" "ip link set eth3 master br10"
   assert_contains "$e" "ip link set br10 up"
   assert_contains "$e" "ip link set vxlan10 up"
@@ -154,8 +156,8 @@ test_leaf_dataplane_exec() {
   assert_contains "$e" "ip link add vxlan10 type vxlan id 10 local 10.0.0.12 dstport 4789 nolearning"
   assert_contains "$e" "ip link set eth3 master br10"
   # Order: bridge exists before anything is enslaved to it, devices up last.
-  assert_eq "$(printf '%s\n' "ip link add br10 type bridge" "ip link add vxlan10 type vxlan id 10 local 10.0.0.12 dstport 4789 nolearning" "ip link set vxlan10 master br10" "ip link set eth3 master br10" "ip link set br10 up" "ip link set vxlan10 up" "ip link set eth3 up")" \
-    "$(grep '^ip link' <<<"$e")" "leaf2 plumbing order"
+  assert_eq "$(printf '%s\n' "ip link add br10 type bridge" "ip link add vxlan10 type vxlan id 10 local 10.0.0.12 dstport 4789 nolearning" "ip link set vxlan10 master br10" "bridge link set dev vxlan10 learning off" "ip link set eth3 master br10" "ip link set br10 up" "ip link set vxlan10 up" "ip link set eth3 up")" \
+    "$(grep -E '^(ip|bridge) link' <<<"$e")" "leaf2 plumbing order"
 }
 test_hosts_get_address_only() {
   local e
@@ -219,7 +221,8 @@ simulators:
 # fabric routes) and enable IPv6 on every interface: BGP unnumbered peers over
 # IPv6 link-local addresses learned from router advertisements.
 # Leaves also build the Linux dataplane: bridge br10 with the VXLAN device
-# (VNI 10, source = loopback, nolearning so remote MACs come only from EVPN)
+# (VNI 10, source = loopback; nolearning on the device and learning off on the bridge
+# port so remote MACs come only from EVPN)
 # and the host-facing eth3 as an untagged access port.
 name: evpn-vxlan-leaf-spine
 
@@ -234,6 +237,7 @@ topology:
       exec:
         - ip route del default
         - sysctl -qw net.ipv6.conf.all.disable_ipv6=0
+        - sysctl -qw net.ipv6.conf.default.disable_ipv6=0
     spine2:
       kind: linux
       image: quay.io/frrouting/frr:10.1
@@ -243,6 +247,7 @@ topology:
       exec:
         - ip route del default
         - sysctl -qw net.ipv6.conf.all.disable_ipv6=0
+        - sysctl -qw net.ipv6.conf.default.disable_ipv6=0
     leaf1:
       kind: linux
       image: quay.io/frrouting/frr:10.1
@@ -252,9 +257,11 @@ topology:
       exec:
         - ip route del default
         - sysctl -qw net.ipv6.conf.all.disable_ipv6=0
+        - sysctl -qw net.ipv6.conf.default.disable_ipv6=0
         - ip link add br10 type bridge
         - ip link add vxlan10 type vxlan id 10 local 10.0.0.11 dstport 4789 nolearning
         - ip link set vxlan10 master br10
+        - bridge link set dev vxlan10 learning off
         - ip link set eth3 master br10
         - ip link set br10 up
         - ip link set vxlan10 up
@@ -268,9 +275,11 @@ topology:
       exec:
         - ip route del default
         - sysctl -qw net.ipv6.conf.all.disable_ipv6=0
+        - sysctl -qw net.ipv6.conf.default.disable_ipv6=0
         - ip link add br10 type bridge
         - ip link add vxlan10 type vxlan id 10 local 10.0.0.12 dstport 4789 nolearning
         - ip link set vxlan10 master br10
+        - bridge link set dev vxlan10 learning off
         - ip link set eth3 master br10
         - ip link set br10 up
         - ip link set vxlan10 up
@@ -528,7 +537,6 @@ test_leaves_are_vteps_with_explicit_route_targets() {
     e="$(sed -n '/^ address-family l2vpn evpn$/,/^ exit-address-family/p' "$SCN/configs/$r/frr.conf")"
     assert_contains "$e" "  advertise-all-vni" "$r advertises its VNIs"
     assert_contains "$e" "  vni 10" "$r VNI block"
-    assert_contains "$e" "   rd auto" "$r RD"
     assert_contains "$e" "   route-target import 65000:10" "$r RT import"
     assert_contains "$e" "   route-target export 65000:10" "$r RT export"
     assert_contains "$e" "  exit-vni" "$r closes the VNI block"
@@ -589,7 +597,6 @@ router bgp 65001
   neighbor fabric activate
   advertise-all-vni
   vni 10
-   rd auto
    route-target import 65000:10
    route-target export 65000:10
   exit-vni
@@ -899,7 +906,7 @@ test_readme_documents_scenario() {
   assert_contains "$r" "nolearning"
   assert_contains "$r" "scripts/up.sh evpn-vxlan-leaf-spine --force"
   assert_contains "$r" "EVPN_TIMEOUT"
-  assert_contains "$r" "next-hop-unchanged"
+  assert_contains "$r" "attribute-unchanged next-hop"
 }
 test_diagram_file_is_valid_drawio_xml() {
   local d; d="$REPO_ROOT/docs/diagrams/evpn-vxlan-leaf-spine.drawio"
@@ -1095,7 +1102,7 @@ Known risks to confirm on that run, each with its fallback:
 |---|---|---|
 | IPv6 disabled on fabric veths despite the sysctl | BGP neighbours stay `Active`; `ip -6 addr show eth1` has no `fe80::` | Add per-interface `net.ipv6.conf.eth1.disable_ipv6=0` lines to `exec:`. |
 | Container lacks `NET_ADMIN` for `ip link add vxlan` | `exec` line fails in `containerlab deploy` output; no `vxlan10` | Add `privileged: true` (or the capability) to the leaf nodes in the topology. |
-| Spines rewrite the EVPN next hop to themselves | `show bgp l2vpn evpn` on a leaf shows the spine loopback as next hop; no remote VTEP | Add `neighbor fabric next-hop-unchanged` under `address-family l2vpn evpn` on the spines. |
+| Spines rewrite the EVPN next hop to themselves | `show bgp l2vpn evpn` on a leaf shows the spine loopback as next hop; no remote VTEP | Add `neighbor fabric attribute-unchanged next-hop` under `address-family l2vpn evpn` on the spines (not expected: FRR keeps the EVPN next hop on eBGP by default). |
 | Next-hop line format differs from `fe80::…, via eth1, weight 1` | Step 3 or 6 count check fails although `ip route` shows two paths | Adjust the grep pattern in `verify.sh` and the stub in `tests/test_evpn_vxlan.sh` to the real format. |
 
 The commit that flips `status` to `ready` records the versions used:
@@ -1117,9 +1124,11 @@ this scenario by hand runs the leaf plumbing in each leaf's console:
 ```
 ip route del default
 sysctl -qw net.ipv6.conf.all.disable_ipv6=0
+sysctl -qw net.ipv6.conf.default.disable_ipv6=0
 ip link add br10 type bridge
 ip link add vxlan10 type vxlan id 10 local 10.0.0.11 dstport 4789 nolearning   # 10.0.0.12 on leaf2
 ip link set vxlan10 master br10
+bridge link set dev vxlan10 learning off
 ip link set eth3 master br10
 ip link set br10 up
 ip link set vxlan10 up
