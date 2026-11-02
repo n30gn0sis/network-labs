@@ -18,6 +18,10 @@ images only: this is the scenario to run first on a new containerlab host.
            r3 ════════ eBGP ════════ r4 ──────
 ```
 
+A draw.io version of this topology lives at
+[`docs/diagrams/ospf-ebgp-two-as.drawio`](../../docs/diagrams/ospf-ebgp-two-as.drawio)
+(open with diagrams.net or import into Visio).
+
 | Node | Role | Loopback / router-id |
 |---|---|---|
 | `r1` | AS 65001 interior, gateway for `h1` (10.1.100.0/24) | 10.1.0.1 |

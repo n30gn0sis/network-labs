@@ -19,6 +19,10 @@ end-to-end traffic, including spoke-to-spoke traffic hairpinning through the hub
                         wan  203.0.113.0/24  (Linux container acting as a bridge)
 ```
 
+A draw.io version of this topology lives at
+[`docs/diagrams/asa-hub-spoke-ipsec.drawio`](../../docs/diagrams/asa-hub-spoke-ipsec.drawio)
+(open with diagrams.net or import into Visio).
+
 Tunnels: `asa-hub` ↔ `asa-spoke1` and `asa-hub` ↔ `asa-spoke2`. There is no
 spoke-to-spoke tunnel; spoke1 ↔ spoke2 traffic goes through the hub.
 
