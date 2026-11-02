@@ -53,4 +53,11 @@ test_simulator_docs_map_asav() {
   assert_contains "$(cat "$REPO_ROOT/docs/simulators/eve-ng.md")" "| \`cisco_asav\` |"
 }
 
+test_conventions_describe_failure_injection() {
+  local c; c="$(cat "$REPO_ROOT/docs/conventions.md")"
+  assert_contains "$c" "Failure injection"
+  assert_contains "$c" "trap"
+  assert_contains "$c" "ip link set"
+}
+
 run_tests

@@ -1,0 +1,77 @@
+# Single source of truth. Interface names are explicit in every link so the
+# README's ethN table and verify.sh's `ip link set eth2 down` on r1 are unambiguous.
+name: ospf-ebgp-two-as
+
+topology:
+  nodes:
+    # Routers drop the management default route: it is a kernel route (distance 0) that would otherwise beat the OSPF default from the border.
+    r1:
+      kind: linux
+      image: quay.io/frrouting/frr:10.1
+      binds:
+        - configs/r1/frr.conf:/etc/frr/frr.conf
+        - configs/r1/daemons:/etc/frr/daemons
+      exec:
+        - ip route del default
+    r2:
+      kind: linux
+      image: quay.io/frrouting/frr:10.1
+      binds:
+        - configs/r2/frr.conf:/etc/frr/frr.conf
+        - configs/r2/daemons:/etc/frr/daemons
+      exec:
+        - ip route del default
+    r3:
+      kind: linux
+      image: quay.io/frrouting/frr:10.1
+      binds:
+        - configs/r3/frr.conf:/etc/frr/frr.conf
+        - configs/r3/daemons:/etc/frr/daemons
+      exec:
+        - ip route del default
+    r4:
+      kind: linux
+      image: quay.io/frrouting/frr:10.1
+      binds:
+        - configs/r4/frr.conf:/etc/frr/frr.conf
+        - configs/r4/daemons:/etc/frr/daemons
+      exec:
+        - ip route del default
+    r5:
+      kind: linux
+      image: quay.io/frrouting/frr:10.1
+      binds:
+        - configs/r5/frr.conf:/etc/frr/frr.conf
+        - configs/r5/daemons:/etc/frr/daemons
+      exec:
+        - ip route del default
+    r6:
+      kind: linux
+      image: quay.io/frrouting/frr:10.1
+      binds:
+        - configs/r6/frr.conf:/etc/frr/frr.conf
+        - configs/r6/daemons:/etc/frr/daemons
+      exec:
+        - ip route del default
+    h1:
+      kind: linux
+      image: wbitt/network-multitool:latest
+      exec:
+        - ip addr add 10.1.100.10/24 dev eth1
+        - ip route replace default via 10.1.100.1
+    h2:
+      kind: linux
+      image: wbitt/network-multitool:latest
+      exec:
+        - ip addr add 10.2.100.10/24 dev eth1
+        - ip route replace default via 10.2.100.1
+  links:
+    - endpoints: ["h1:eth1", "r1:eth1"]
+    - endpoints: ["r1:eth2", "r3:eth1"]   # primary path, taken down in the failover test
+    - endpoints: ["r1:eth3", "r2:eth1"]
+    - endpoints: ["r2:eth2", "r3:eth2"]
+    - endpoints: ["r3:eth3", "r4:eth1"]   # eBGP
+    - endpoints: ["r4:eth2", "r6:eth2"]   # primary path
+    - endpoints: ["r4:eth3", "r5:eth1"]
+    - endpoints: ["r5:eth2", "r6:eth3"]
+    - endpoints: ["r6:eth1", "h2:eth1"]

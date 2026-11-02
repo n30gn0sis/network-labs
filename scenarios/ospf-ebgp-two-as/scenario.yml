@@ -1,0 +1,16 @@
+# Two ASes in OSPF, joined by eBGP. Topology in topology.clab.yml.
+name: ospf-ebgp-two-as
+title: Two autonomous systems, OSPF inside, eBGP between, with intra-AS failover
+topic: routing/ospf-bgp
+status: draft                     # flip to ready after a live containerlab run (see README)
+default_variant: frr
+variants:
+  frr:
+    images:
+      router: quay.io/frrouting/frr:10.1
+      host: wbitt/network-multitool:latest
+    notes: free images only; FRR 10.x syntax
+simulators:
+  containerlab: native
+  gns3: none
+  eve-ng: none
