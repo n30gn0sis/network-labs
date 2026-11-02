@@ -176,4 +176,31 @@ test_spines_relay_evpn_without_vtep_role() {
   done
 }
 
+test_leaf_configs_exist() {
+  local r; for r in $LEAVES; do assert_file_exists "$SCN/configs/$r/frr.conf"; assert_file_exists "$SCN/configs/$r/daemons"; done
+}
+test_leaf_base_and_fabric_bgp() {
+  assert_router_base leaf1 10.0.0.11 65001; assert_fabric_bgp leaf1; assert_ra_on leaf1 eth1 eth2
+  assert_router_base leaf2 10.0.0.12 65002; assert_fabric_bgp leaf2; assert_ra_on leaf2 eth1 eth2
+}
+test_leaves_are_vteps_with_explicit_route_targets() {
+  local r e
+  for r in $LEAVES; do
+    e="$(sed -n '/^ address-family l2vpn evpn$/,/^ exit-address-family/p' "$SCN/configs/$r/frr.conf")"
+    assert_contains "$e" "  advertise-all-vni" "$r advertises its VNIs"
+    assert_contains "$e" "  vni 10" "$r VNI block"
+    assert_contains "$e" "   rd auto" "$r RD"
+    assert_contains "$e" "   route-target import 65000:10" "$r RT import"
+    assert_contains "$e" "   route-target export 65000:10" "$r RT export"
+    assert_contains "$e" "  exit-vni" "$r closes the VNI block"
+    assert_not_contains "$(cfg "$r")" "interface eth3" "$r eth3 is a bridge member, not an FRR interface"
+  done
+}
+test_leaf_asns_differ_and_match_spec() {
+  assert_contains "$(cfg leaf1)" "router bgp 65001"
+  assert_contains "$(cfg leaf2)" "router bgp 65002"
+  assert_not_contains "$(cfg leaf1)" "router bgp 65002"
+  assert_not_contains "$(cfg leaf2)" "router bgp 65001"
+}
+
 run_tests
