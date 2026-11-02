@@ -31,7 +31,7 @@ See `docs/conventions.md` for layout, naming and the variant/export rules, and
 scenarios/<name>/   scenario.yml, topology.clab.yml, configs/, variants/, export/, verify.sh
 scenarios/_template/ the template scripts/new-scenario.sh copies
 scripts/            up.sh, down.sh, verify.sh, export.sh, new-scenario.sh, lib.sh, test.sh
-docs/               conventions, simulator guides, design specs
+docs/               conventions, simulator guides, design specs, draw.io topology diagrams (docs/diagrams/)
 images/             image policy
 ```
 
