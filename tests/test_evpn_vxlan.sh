@@ -203,4 +203,136 @@ test_leaf_asns_differ_and_match_spec() {
   assert_not_contains "$(cfg leaf2)" "router bgp 65001"
 }
 
+# Stateful docker stub. The second argv word is the container name; the command is $5.
+# It records "ip link set eth1 down/up" (leaf1's uplink to spine1) and whether a host
+# ping has happened (MAC learning needs traffic), so routes and EVPN tables change state.
+H1_MAC="aa:c1:ab:00:00:01"
+H2_MAC="aa:c1:ab:00:00:02"
+make_frr_stub() { # ROOT MODE
+  local root="$1" mode="$2"
+  mkdir -p "$root/bin"
+  cat >"$root/bin/docker" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"$root/docker.log"
+node="\${2#clab-evpn-vxlan-leaf-spine-}"
+cmd="\${5:-}"
+mode="$mode"
+down="$root/eth1_down"
+pinged="$root/pinged"
+h1mac="$H1_MAC"; h2mac="$H2_MAC"
+# Two next hops normally; one once leaf1 eth1 is down (unless no-failover) or always in single-path.
+paths() {
+  if [[ "\$mode" == single-path ]]; then echo 1
+  elif [[ -e "\$down" && "\$mode" != no-failover ]]; then echo 1
+  else echo 2; fi
+}
+case "\$cmd" in
+  *"ip link set eth1 down"*) touch "\$down"; exit 0 ;;
+  *"ip link set eth1 up"*)   rm -f "\$down"; exit 0 ;;
+  *"show version"*) echo "FRRouting 10.1 (\$node)" ;;
+  *"show bgp ipv4 unicast summary json"*)
+    if [[ "\$mode" == bgp-active && "\$node" == spine1 ]]; then echo 1; else echo 2; fi ;;
+  *"show bgp l2vpn evpn summary json"*)
+    if [[ "\$mode" == evpn-down && "\$node" == leaf1 ]]; then echo 1; else echo 2; fi ;;
+  *"show bgp ipv4 unicast summary"*)
+    echo "Neighbor        V         AS   MsgRcvd   MsgSent   TblVer  InQ OutQ  Up/Down State/PfxRcd   PfxSnt Desc"
+    echo "eth1            4      65100       120       118        0    0    0 00:10:00            1        1 N/A"
+    echo "eth2            4      65100       120       118        0    0    0 00:10:00            1        1 N/A" ;;
+  *"show ip route 10.0.0.12/32' | grep -c"*|*"show ip route 10.0.0.11/32' | grep -c"*)
+    paths ;;
+  *"show ip route 10.0.0.12/32"*|*"show ip route 10.0.0.11/32"*)
+    echo "Routing entry for 10.0.0.1x/32"
+    echo '  Known via "bgp", distance 20, metric 0, best'
+    echo "  Last update 00:10:00 ago"
+    [[ "\$(paths)" == 2 ]] && echo "  * fe80::a8c1:abff:fe00:1, via eth1, weight 1"
+    echo "  * fe80::a8c1:abff:fe00:2, via eth2, weight 1" ;;
+  *"show evpn vni 10"*)
+    echo "VNI: 10"
+    echo " Type: L2"
+    echo " VxLAN interface: vxlan10"
+    if [[ "\$node" == leaf1 ]]; then echo " Local VTEP IP: 10.0.0.11"; r=10.0.0.12; else echo " Local VTEP IP: 10.0.0.12"; r=10.0.0.11; fi
+    echo " Remote VTEPs for this VNI:"
+    [[ "\$mode" == no-vtep ]] || echo "  \$r flood: HER" ;;
+  *"show evpn mac vni 10"*)
+    # Emulate the appended "| grep -i <mac>": print only the matching row.
+    if [[ ! -e "\$pinged" ]]; then exit 0; fi
+    case "\$cmd" in
+      *"\$h1mac"*)
+        if [[ "\$node" == leaf1 ]]; then echo "\$h1mac local eth3 0/0 0 0"
+        elif [[ "\$mode" != mac-local-only ]]; then echo "\$h1mac remote 10.0.0.11 0/0 0 0"; fi ;;
+      *"\$h2mac"*)
+        if [[ "\$node" == leaf2 ]]; then echo "\$h2mac local eth3 0/0 0 0"
+        elif [[ "\$mode" != mac-local-only ]]; then echo "\$h2mac remote 10.0.0.12 0/0 0 0"; fi ;;
+    esac ;;
+  *"cat /sys/class/net/eth1/address"*)
+    if [[ "\$node" == h1 ]]; then echo "\$h1mac"; else echo "\$h2mac"; fi ;;
+  *ping*) touch "\$pinged"; echo "3 packets transmitted, 3 received, 0% packet loss" ;;
+  *) echo "unknown" ;;
+esac
+STUB
+  chmod +x "$root/bin/docker"
+}
+run_verify() { # ROOT
+  LIB_REPO_ROOT="$REPO_ROOT" DOCKER="$1/bin/docker" WAIT_INTERVAL=1 BOOT_TIMEOUT=2 BGP_TIMEOUT=2 EVPN_TIMEOUT=2 \
+    "$REPO_ROOT/scripts/verify.sh" evpn-vxlan-leaf-spine
+}
+
+test_verify_passes_against_healthy_stub() {
+  local root out; root="$(make_tmpdir)"; make_frr_stub "$root" ok
+  out="$(run_verify "$root" 2>&1)"
+  assert_contains "$out" "all checks passed"
+  local dk; dk="$(cat "$root/docker.log")"
+  assert_contains "$dk" "clab-evpn-vxlan-leaf-spine-leaf1 sh -c ip link set eth1 down"
+  assert_contains "$dk" "clab-evpn-vxlan-leaf-spine-leaf1 sh -c ip link set eth1 up"
+  assert_contains "$dk" "clab-evpn-vxlan-leaf-spine-spine2 sh -c vtysh -c 'show bgp l2vpn evpn summary json'"
+  assert_contains "$dk" "clab-evpn-vxlan-leaf-spine-leaf2 sh -c vtysh -c 'show evpn mac vni 10' | grep -i $H1_MAC"
+  assert_contains "$dk" "clab-evpn-vxlan-leaf-spine-h1 sh -c ping -c 3 -W 2 10.10.0.2"
+  assert_not_contains "$dk" "ping -c 3 -W 2 10.10.0.1" "h2 never has to ping; one direction proves the stretched VLAN"
+  [[ ! -e "$root/eth1_down" ]] || return 1   # link restored at the end
+}
+test_verify_fails_when_bgp_active() {
+  local root out rc=0; root="$(make_tmpdir)"; make_frr_stub "$root" bgp-active
+  out="$(run_verify "$root" 2>&1)" || rc=$?
+  assert_eq 1 "$rc"
+  assert_contains "$out" "spine1: 'vtysh -c 'show bgp ipv4 unicast summary json'"
+  assert_contains "$out" "did not contain '2'"
+  assert_not_contains "$(cat "$root/docker.log")" "ip link set eth1 down" "failover never reached"
+}
+test_verify_fails_when_evpn_session_down() {
+  local root out rc=0; root="$(make_tmpdir)"; make_frr_stub "$root" evpn-down
+  out="$(run_verify "$root" 2>&1)" || rc=$?
+  assert_eq 1 "$rc"
+  assert_contains "$out" "leaf1: 'vtysh -c 'show bgp l2vpn evpn summary json'"
+  assert_contains "$out" "did not contain '2'"
+}
+test_verify_fails_when_single_path_before_failover() {
+  local root out rc=0; root="$(make_tmpdir)"; make_frr_stub "$root" single-path
+  out="$(run_verify "$root" 2>&1)" || rc=$?
+  assert_eq 1 "$rc"
+  assert_contains "$out" "leaf1: 'vtysh -c 'show ip route 10.0.0.12/32' | grep -c ' eth[12]'' did not contain '2'"
+  assert_not_contains "$(cat "$root/docker.log")" "show evpn vni" "fails before the EVPN checks"
+}
+test_verify_fails_when_no_remote_vtep() {
+  local root out rc=0; root="$(make_tmpdir)"; make_frr_stub "$root" no-vtep
+  out="$(run_verify "$root" 2>&1)" || rc=$?
+  assert_eq 1 "$rc"
+  assert_contains "$out" "leaf1: 'vtysh -c 'show evpn vni 10'' did not contain '10.0.0.12'"
+  assert_not_contains "$(cat "$root/docker.log")" "ping" "fails before any host traffic"
+}
+test_verify_fails_when_mac_only_local() {
+  local root out rc=0; root="$(make_tmpdir)"; make_frr_stub "$root" mac-local-only
+  out="$(run_verify "$root" 2>&1)" || rc=$?
+  assert_eq 1 "$rc"
+  assert_contains "$out" "leaf2: 'vtysh -c 'show evpn mac vni 10' | grep -i $H1_MAC' did not contain '10.0.0.11'"
+  assert_not_contains "$(cat "$root/docker.log")" "ip link set eth1 down" "failover never reached"
+}
+test_verify_fails_when_no_failover_and_still_restores_link() {
+  local root out rc=0; root="$(make_tmpdir)"; make_frr_stub "$root" no-failover
+  out="$(run_verify "$root" 2>&1)" || rc=$?
+  assert_eq 1 "$rc"
+  assert_contains "$out" "leaf1: 'vtysh -c 'show ip route 10.0.0.12/32' | grep -c ' eth[12]'' did not contain '1'"
+  assert_eq "ip link set eth1 up" "$(grep -o 'ip link set eth1 [a-z]*' "$root/docker.log" | tail -1)" "trap restored the link"
+  [[ ! -e "$root/eth1_down" ]] || return 1
+}
+
 run_tests
