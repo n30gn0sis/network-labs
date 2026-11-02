@@ -93,6 +93,18 @@ with `exec: [ip route del default]`, since the kernel route (distance 0)
 outranks any protocol default. Hosts that should route via a lab router use
 `ip route replace default via <router>` instead.
 
+### Dataplane plumbing
+
+Linux-level objects a scenario needs beyond what FRR configures (bridges,
+VXLAN devices, VLAN subinterfaces, sysctls) live in the node's `exec:` list in
+`topology.clab.yml`, after `ip route del default`, in the order the kernel
+needs them (create the bridge, create and enslave members, bring devices up).
+Containerlab runs `exec:` after the container starts, with no ordering
+guarantee against FRR's own startup, so `verify.sh` must not assume one: every
+check that depends on both (a VNI present, a VTEP learned) is wrapped in
+`wait_for`. GNS3 and EVE-NG have no equivalent hook, so a scenario that uses
+`exec:` plumbing lists the commands in its README for manual entry.
+
 ## Development tools
 
 Runtime: `bash`, `docker`, `containerlab`, `git`, and `yq` **v4 from

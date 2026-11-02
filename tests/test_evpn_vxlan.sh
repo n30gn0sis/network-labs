@@ -335,4 +335,27 @@ test_verify_fails_when_no_failover_and_still_restores_link() {
   [[ ! -e "$root/eth1_down" ]] || return 1
 }
 
+test_readme_documents_scenario() {
+  local r; r="$(cat "$SCN/README.md")"
+  for s in "## Objective" "## Topology" "## Design" "## Verification" "## Failover walkthrough" "## Validation on a containerlab host"; do
+    assert_contains "$r" "$s"
+  done
+  assert_contains "$r" "docs/diagrams/evpn-vxlan-leaf-spine.drawio"
+  assert_contains "$r" "leaf1:eth1"
+  assert_contains "$r" "advertise-all-vni"
+  assert_contains "$r" "route-target"
+  assert_contains "$r" "nolearning"
+  assert_contains "$r" "scripts/up.sh evpn-vxlan-leaf-spine --force"
+  assert_contains "$r" "EVPN_TIMEOUT"
+  assert_contains "$r" "next-hop-unchanged"
+}
+test_diagram_file_is_valid_drawio_xml() {
+  local d; d="$REPO_ROOT/docs/diagrams/evpn-vxlan-leaf-spine.drawio"
+  assert_file_exists "$d"
+  assert_succeeds python3 -c "import xml.dom.minidom,sys; xml.dom.minidom.parse(sys.argv[1])" "$d"
+  local x; x="$(cat "$d")"
+  for n in spine1 spine2 leaf1 leaf2 h1 h2; do assert_contains "$x" "$n" "diagram names $n"; done
+  assert_contains "$x" "VNI 10"
+}
+
 run_tests

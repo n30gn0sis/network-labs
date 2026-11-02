@@ -60,4 +60,15 @@ test_conventions_describe_failure_injection() {
   assert_contains "$c" "ip link set"
 }
 
+test_conventions_describe_dataplane_plumbing() {
+  local c; c="$(cat "$REPO_ROOT/docs/conventions.md")"
+  assert_contains "$c" "### Dataplane plumbing"
+  assert_contains "$c" "exec:"
+  assert_contains "$c" "wait_for"
+}
+test_simulator_docs_note_exec_plumbing_is_not_exported() {
+  assert_contains "$(cat "$REPO_ROOT/docs/simulators/gns3.md")" "exec:"
+  assert_contains "$(cat "$REPO_ROOT/docs/simulators/eve-ng.md")" "exec:"
+}
+
 run_tests
