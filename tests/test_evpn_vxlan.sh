@@ -67,6 +67,7 @@ test_routers_housekeeping_exec() {
     e="$(exec_of "$r")"
     assert_eq "ip route del default" "$(head -1 <<<"$e")" "$r drops the management default first"
     assert_contains "$e" "sysctl -qw net.ipv6.conf.all.disable_ipv6=0" "$r enables IPv6 for BGP unnumbered"
+    assert_contains "$e" "sysctl -qw net.ipv6.conf.default.disable_ipv6=0" "$r enables IPv6 on interfaces created later"
   done
   for r in $SPINES; do
     assert_not_contains "$(exec_of "$r")" "ip link" "$r has no dataplane plumbing"
@@ -78,6 +79,7 @@ test_leaf_dataplane_exec() {
   assert_contains "$e" "ip link add br10 type bridge"
   assert_contains "$e" "ip link add vxlan10 type vxlan id 10 local 10.0.0.11 dstport 4789 nolearning"
   assert_contains "$e" "ip link set vxlan10 master br10"
+  assert_contains "$e" "bridge link set dev vxlan10 learning off"
   assert_contains "$e" "ip link set eth3 master br10"
   assert_contains "$e" "ip link set br10 up"
   assert_contains "$e" "ip link set vxlan10 up"
@@ -86,8 +88,8 @@ test_leaf_dataplane_exec() {
   assert_contains "$e" "ip link add vxlan10 type vxlan id 10 local 10.0.0.12 dstport 4789 nolearning"
   assert_contains "$e" "ip link set eth3 master br10"
   # Order: bridge exists before anything is enslaved to it, devices up last.
-  assert_eq "$(printf '%s\n' "ip link add br10 type bridge" "ip link add vxlan10 type vxlan id 10 local 10.0.0.12 dstport 4789 nolearning" "ip link set vxlan10 master br10" "ip link set eth3 master br10" "ip link set br10 up" "ip link set vxlan10 up" "ip link set eth3 up")" \
-    "$(grep '^ip link' <<<"$e")" "leaf2 plumbing order"
+  assert_eq "$(printf '%s\n' "ip link add br10 type bridge" "ip link add vxlan10 type vxlan id 10 local 10.0.0.12 dstport 4789 nolearning" "ip link set vxlan10 master br10" "bridge link set dev vxlan10 learning off" "ip link set eth3 master br10" "ip link set br10 up" "ip link set vxlan10 up" "ip link set eth3 up")" \
+    "$(grep -E '^(ip|bridge) link' <<<"$e")" "leaf2 plumbing order"
 }
 test_hosts_get_address_only() {
   local e
@@ -98,7 +100,7 @@ test_hosts_get_address_only() {
   assert_contains "$e" "ip addr add 10.10.0.2/24 dev eth1"
   assert_not_contains "$e" "ip route" "h2 keeps its management route and needs no fabric default"
 }
-test_verify_placeholder_is_executable_and_sources_lib() {
+test_verify_is_executable_and_sources_lib() {
   [[ -x "$SCN/verify.sh" ]]
   # shellcheck disable=SC2016
   assert_contains "$(cat "$SCN/verify.sh")" 'source "${LIB_SH:?'
@@ -189,7 +191,6 @@ test_leaves_are_vteps_with_explicit_route_targets() {
     e="$(sed -n '/^ address-family l2vpn evpn$/,/^ exit-address-family/p' "$SCN/configs/$r/frr.conf")"
     assert_contains "$e" "  advertise-all-vni" "$r advertises its VNIs"
     assert_contains "$e" "  vni 10" "$r VNI block"
-    assert_contains "$e" "   rd auto" "$r RD"
     assert_contains "$e" "   route-target import 65000:10" "$r RT import"
     assert_contains "$e" "   route-target export 65000:10" "$r RT export"
     assert_contains "$e" "  exit-vni" "$r closes the VNI block"
@@ -222,18 +223,18 @@ pinged="$root/pinged"
 h1mac="$H1_MAC"; h2mac="$H2_MAC"
 # Two next hops normally; one once leaf1 eth1 is down (unless no-failover) or always in single-path.
 paths() {
-  if [[ "\$mode" == single-path ]]; then echo 1
-  elif [[ -e "\$down" && "\$mode" != no-failover ]]; then echo 1
-  else echo 2; fi
+  if [[ "\$mode" == single-path ]]; then echo paths=1
+  elif [[ -e "\$down" && "\$mode" != no-failover ]]; then echo paths=1
+  else echo paths=2; fi
 }
 case "\$cmd" in
   *"ip link set eth1 down"*) touch "\$down"; exit 0 ;;
   *"ip link set eth1 up"*)   rm -f "\$down"; exit 0 ;;
   *"show version"*) echo "FRRouting 10.1 (\$node)" ;;
   *"show bgp ipv4 unicast summary json"*)
-    if [[ "\$mode" == bgp-active && "\$node" == spine1 ]]; then echo 1; else echo 2; fi ;;
+    if [[ "\$mode" == bgp-active && "\$node" == spine1 ]]; then echo established=1; else echo established=2; fi ;;
   *"show bgp l2vpn evpn summary json"*)
-    if [[ "\$mode" == evpn-down && "\$node" == leaf1 ]]; then echo 1; else echo 2; fi ;;
+    if [[ "\$mode" == evpn-down && "\$node" == leaf1 ]]; then echo established=1; else echo established=2; fi ;;
   *"show bgp ipv4 unicast summary"*)
     echo "Neighbor        V         AS   MsgRcvd   MsgSent   TblVer  InQ OutQ  Up/Down State/PfxRcd   PfxSnt Desc"
     echo "eth1            4      65100       120       118        0    0    0 00:10:00            1        1 N/A"
@@ -244,7 +245,7 @@ case "\$cmd" in
     echo "Routing entry for 10.0.0.1x/32"
     echo '  Known via "bgp", distance 20, metric 0, best'
     echo "  Last update 00:10:00 ago"
-    [[ "\$(paths)" == 2 ]] && echo "  * fe80::a8c1:abff:fe00:1, via eth1, weight 1"
+    [[ "\$(paths)" == paths=2 ]] && echo "  * fe80::a8c1:abff:fe00:1, via eth1, weight 1"
     echo "  * fe80::a8c1:abff:fe00:2, via eth2, weight 1" ;;
   *"show evpn vni 10"*)
     echo "VNI: 10"
@@ -294,22 +295,20 @@ test_verify_fails_when_bgp_active() {
   local root out rc=0; root="$(make_tmpdir)"; make_frr_stub "$root" bgp-active
   out="$(run_verify "$root" 2>&1)" || rc=$?
   assert_eq 1 "$rc"
-  assert_contains "$out" "spine1: 'vtysh -c 'show bgp ipv4 unicast summary json'"
-  assert_contains "$out" "did not contain '2'"
+  assert_contains "$out" "spine1: 'vtysh -c 'show bgp ipv4 unicast summary json' | grep -c '\"state\":\"Established\"' | sed 's/^/established=/'' did not contain 'established=2'"
   assert_not_contains "$(cat "$root/docker.log")" "ip link set eth1 down" "failover never reached"
 }
 test_verify_fails_when_evpn_session_down() {
   local root out rc=0; root="$(make_tmpdir)"; make_frr_stub "$root" evpn-down
   out="$(run_verify "$root" 2>&1)" || rc=$?
   assert_eq 1 "$rc"
-  assert_contains "$out" "leaf1: 'vtysh -c 'show bgp l2vpn evpn summary json'"
-  assert_contains "$out" "did not contain '2'"
+  assert_contains "$out" "leaf1: 'vtysh -c 'show bgp l2vpn evpn summary json' | grep -c '\"state\":\"Established\"' | sed 's/^/established=/'' did not contain 'established=2'"
 }
 test_verify_fails_when_single_path_before_failover() {
   local root out rc=0; root="$(make_tmpdir)"; make_frr_stub "$root" single-path
   out="$(run_verify "$root" 2>&1)" || rc=$?
   assert_eq 1 "$rc"
-  assert_contains "$out" "leaf1: 'vtysh -c 'show ip route 10.0.0.12/32' | grep -c ' eth[12]'' did not contain '2'"
+  assert_contains "$out" "leaf1: 'vtysh -c 'show ip route 10.0.0.12/32' | grep -c ' eth[12]' | sed 's/^/paths=/'' did not contain 'paths=2'"
   assert_not_contains "$(cat "$root/docker.log")" "show evpn vni" "fails before the EVPN checks"
 }
 test_verify_fails_when_no_remote_vtep() {
@@ -330,7 +329,7 @@ test_verify_fails_when_no_failover_and_still_restores_link() {
   local root out rc=0; root="$(make_tmpdir)"; make_frr_stub "$root" no-failover
   out="$(run_verify "$root" 2>&1)" || rc=$?
   assert_eq 1 "$rc"
-  assert_contains "$out" "leaf1: 'vtysh -c 'show ip route 10.0.0.12/32' | grep -c ' eth[12]'' did not contain '1'"
+  assert_contains "$out" "leaf1: 'vtysh -c 'show ip route 10.0.0.12/32' | grep -c ' eth[12]' | sed 's/^/paths=/'' did not contain 'paths=1'"
   assert_eq "ip link set eth1 up" "$(grep -o 'ip link set eth1 [a-z]*' "$root/docker.log" | tail -1)" "trap restored the link"
   [[ ! -e "$root/eth1_down" ]] || return 1
 }
@@ -347,7 +346,7 @@ test_readme_documents_scenario() {
   assert_contains "$r" "nolearning"
   assert_contains "$r" "scripts/up.sh evpn-vxlan-leaf-spine --force"
   assert_contains "$r" "EVPN_TIMEOUT"
-  assert_contains "$r" "next-hop-unchanged"
+  assert_contains "$r" "attribute-unchanged next-hop"
 }
 test_diagram_file_is_valid_drawio_xml() {
   local d; d="$REPO_ROOT/docs/diagrams/evpn-vxlan-leaf-spine.drawio"

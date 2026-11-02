@@ -5,7 +5,8 @@
 # fabric routes) and enable IPv6 on every interface: BGP unnumbered peers over
 # IPv6 link-local addresses learned from router advertisements.
 # Leaves also build the Linux dataplane: bridge br10 with the VXLAN device
-# (VNI 10, source = loopback, nolearning so remote MACs come only from EVPN)
+# (VNI 10, source = loopback; nolearning on the device and learning off on the bridge
+# port so remote MACs come only from EVPN)
 # and the host-facing eth3 as an untagged access port.
 name: evpn-vxlan-leaf-spine
 
@@ -20,6 +21,7 @@ topology:
       exec:
         - ip route del default
         - sysctl -qw net.ipv6.conf.all.disable_ipv6=0
+        - sysctl -qw net.ipv6.conf.default.disable_ipv6=0
     spine2:
       kind: linux
       image: quay.io/frrouting/frr:10.1
@@ -29,6 +31,7 @@ topology:
       exec:
         - ip route del default
         - sysctl -qw net.ipv6.conf.all.disable_ipv6=0
+        - sysctl -qw net.ipv6.conf.default.disable_ipv6=0
     leaf1:
       kind: linux
       image: quay.io/frrouting/frr:10.1
@@ -38,9 +41,11 @@ topology:
       exec:
         - ip route del default
         - sysctl -qw net.ipv6.conf.all.disable_ipv6=0
+        - sysctl -qw net.ipv6.conf.default.disable_ipv6=0
         - ip link add br10 type bridge
         - ip link add vxlan10 type vxlan id 10 local 10.0.0.11 dstport 4789 nolearning
         - ip link set vxlan10 master br10
+        - bridge link set dev vxlan10 learning off
         - ip link set eth3 master br10
         - ip link set br10 up
         - ip link set vxlan10 up
@@ -54,9 +59,11 @@ topology:
       exec:
         - ip route del default
         - sysctl -qw net.ipv6.conf.all.disable_ipv6=0
+        - sysctl -qw net.ipv6.conf.default.disable_ipv6=0
         - ip link add br10 type bridge
         - ip link add vxlan10 type vxlan id 10 local 10.0.0.12 dstport 4789 nolearning
         - ip link set vxlan10 master br10
+        - bridge link set dev vxlan10 learning off
         - ip link set eth3 master br10
         - ip link set br10 up
         - ip link set vxlan10 up
