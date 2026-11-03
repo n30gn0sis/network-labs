@@ -31,3 +31,6 @@ Until a converter exists, `export/eve-ng/<name>.unl` is written by hand from
 - Node `name` attributes equal clab node names; networks/links in the clab
   `links:` order.
 - Check staleness with `scripts/export.sh <scenario> eve-ng`.
+- Containerlab `exec:` lines (management-route cleanup, bridge and VXLAN
+  plumbing) are not carried into a `.unl` file; the scenario README lists
+  them for manual entry in the node console.

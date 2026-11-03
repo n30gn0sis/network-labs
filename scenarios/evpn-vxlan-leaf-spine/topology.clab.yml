@@ -1,0 +1,87 @@
+# Single source of truth. Interface names are explicit in every link so the
+# README's ethN table and verify.sh's `ip link set eth1 down` on leaf1 are unambiguous.
+#
+# Routers drop the management default route (a kernel route that would shadow
+# fabric routes) and enable IPv6 on every interface: BGP unnumbered peers over
+# IPv6 link-local addresses learned from router advertisements.
+# Leaves also build the Linux dataplane: bridge br10 with the VXLAN device
+# (VNI 10, source = loopback; nolearning on the device and learning off on the bridge
+# port so remote MACs come only from EVPN)
+# and the host-facing eth3 as an untagged access port.
+name: evpn-vxlan-leaf-spine
+
+topology:
+  nodes:
+    spine1:
+      kind: linux
+      image: quay.io/frrouting/frr:10.1
+      binds:
+        - configs/spine1/frr.conf:/etc/frr/frr.conf
+        - configs/spine1/daemons:/etc/frr/daemons
+      exec:
+        - ip route del default
+        - sysctl -qw net.ipv6.conf.all.disable_ipv6=0
+        - sysctl -qw net.ipv6.conf.default.disable_ipv6=0
+    spine2:
+      kind: linux
+      image: quay.io/frrouting/frr:10.1
+      binds:
+        - configs/spine2/frr.conf:/etc/frr/frr.conf
+        - configs/spine2/daemons:/etc/frr/daemons
+      exec:
+        - ip route del default
+        - sysctl -qw net.ipv6.conf.all.disable_ipv6=0
+        - sysctl -qw net.ipv6.conf.default.disable_ipv6=0
+    leaf1:
+      kind: linux
+      image: quay.io/frrouting/frr:10.1
+      binds:
+        - configs/leaf1/frr.conf:/etc/frr/frr.conf
+        - configs/leaf1/daemons:/etc/frr/daemons
+      exec:
+        - ip route del default
+        - sysctl -qw net.ipv6.conf.all.disable_ipv6=0
+        - sysctl -qw net.ipv6.conf.default.disable_ipv6=0
+        - ip link add br10 type bridge
+        - ip link add vxlan10 type vxlan id 10 local 10.0.0.11 dstport 4789 nolearning
+        - ip link set vxlan10 master br10
+        - bridge link set dev vxlan10 learning off
+        - ip link set eth3 master br10
+        - ip link set br10 up
+        - ip link set vxlan10 up
+        - ip link set eth3 up
+    leaf2:
+      kind: linux
+      image: quay.io/frrouting/frr:10.1
+      binds:
+        - configs/leaf2/frr.conf:/etc/frr/frr.conf
+        - configs/leaf2/daemons:/etc/frr/daemons
+      exec:
+        - ip route del default
+        - sysctl -qw net.ipv6.conf.all.disable_ipv6=0
+        - sysctl -qw net.ipv6.conf.default.disable_ipv6=0
+        - ip link add br10 type bridge
+        - ip link add vxlan10 type vxlan id 10 local 10.0.0.12 dstport 4789 nolearning
+        - ip link set vxlan10 master br10
+        - bridge link set dev vxlan10 learning off
+        - ip link set eth3 master br10
+        - ip link set br10 up
+        - ip link set vxlan10 up
+        - ip link set eth3 up
+    h1:
+      kind: linux
+      image: wbitt/network-multitool:latest
+      exec:
+        - ip addr add 10.10.0.1/24 dev eth1
+    h2:
+      kind: linux
+      image: wbitt/network-multitool:latest
+      exec:
+        - ip addr add 10.10.0.2/24 dev eth1
+  links:
+    - endpoints: ["leaf1:eth1", "spine1:eth1"]   # taken down in the failover test
+    - endpoints: ["leaf1:eth2", "spine2:eth1"]
+    - endpoints: ["leaf2:eth1", "spine1:eth2"]
+    - endpoints: ["leaf2:eth2", "spine2:eth2"]
+    - endpoints: ["leaf1:eth3", "h1:eth1"]       # VLAN 10 access port
+    - endpoints: ["leaf2:eth3", "h2:eth1"]       # VLAN 10 access port

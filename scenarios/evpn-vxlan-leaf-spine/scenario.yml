@@ -1,0 +1,16 @@
+# Leaf-spine fabric: eBGP unnumbered underlay, BGP EVPN overlay, one L2 VNI. Topology in topology.clab.yml.
+name: evpn-vxlan-leaf-spine
+title: Two-spine two-leaf EVPN/VXLAN fabric with a stretched VLAN and spine-uplink failover
+topic: datacenter/evpn-vxlan
+status: draft                     # flip to ready after a live containerlab run (see README)
+default_variant: frr
+variants:
+  frr:
+    images:
+      router: quay.io/frrouting/frr:10.1
+      host: wbitt/network-multitool:latest
+    notes: free images only; FRR 10.x syntax; Linux kernel bridge + VXLAN dataplane
+simulators:
+  containerlab: native
+  gns3: none
+  eve-ng: none

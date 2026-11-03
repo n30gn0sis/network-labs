@@ -31,3 +31,6 @@ under `simulators.gns3`.
   `# derived from topology.clab.yml @ <short sha>`.
 - Node labels equal clab node names; links in the clab `links:` order.
 - Check staleness with `scripts/export.sh <scenario> gns3`.
+- Containerlab `exec:` lines (management-route cleanup, bridge and VXLAN
+  plumbing) are not carried into a `.gns3` file; the scenario README lists
+  them for manual entry in the node console.
